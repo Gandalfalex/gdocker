@@ -1,157 +1,290 @@
-# gdocker - Docker TUI
+# GDocker
 
-A lightweight terminal user interface for managing Docker containers and Docker Compose environments, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Features Vim-style navigation and a clean interface.
+A modern, vim-inspired terminal user interface (TUI) for managing Docker containers, volumes, images, and networks. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for a fast, responsive experience.
 
-## Features
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)
 
-- **Container Management**: View, start, stop, restart, and delete containers
-- **Docker Compose Support**: Group and manage containers by compose projects
-- **Live Logs**: View and scroll through container logs
-- **Interactive Shell**: Exec into containers with automatic shell detection
-- **Port Mappings**: View ports and open them directly in your browser
-- **Environment Variables**: Inspect container environment variables
-- **Vim Keybindings**: Navigate with `j/k/h/l`, jump with `gg/G`, and more
+## ✨ Features
 
-## Installation
+- 🐳 **Complete Docker Management**: Containers, volumes, images, and networks
+- 📦 **Docker Compose Support**: Automatic project grouping and management
+- ⌨️ **Vim-like Commands**: Familiar `:q`, `:help`, and command mode
+- 📊 **Live Container Stats**: Real-time CPU, memory, and network monitoring
+- 📝 **Smart Log Viewer**: Search, navigate, and highlight log entries
+- 🔍 **Container Inspect**: View full JSON configuration
+- 🌐 **Port Management**: Quick browser launch for exposed ports
+- 🎨 **Clean UI**: Color-coded status indicators and intuitive navigation
+- 🚀 **Lightweight**: Single binary, minimal dependencies
+
+## 📦 Installation
+
+### From Source
+
+```bash
+git clone https://github.com/Gandalfalex/gdocker.git
+cd gdocker
+make build
+make install  # Installs to /usr/local/bin
+```
+
+Or manually:
+
+```bash
+go build -o gdocker
+./gdocker
+```
 
 ### Prerequisites
 
 - Go 1.21 or higher
 - Docker daemon running
+- Access to Docker socket (typically `/var/run/docker.sock`)
 
-### Build from Source
+## 🎮 Usage
 
-```bash
-cd /Users/ich/projects/gdocker
-go build -o gdocker
-```
-
-### Run
+Simply run:
 
 ```bash
-./gdocker
+gdocker
 ```
 
-## Keybindings
+### Quick Start
+
+1. Use **1-4** to switch between containers, volumes, images, and networks
+2. Navigate with **j/k** (vim-style) or arrow keys
+3. Press **:** to enter command mode
+4. Type **:help** for a complete command reference
+5. Press **:q** to quit
+
+## ⌨️ Keybindings
 
 ### Navigation
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `g` | Jump to top (press twice: `gg`) |
-| `G` | Jump to bottom |
-| `enter` / `space` | Expand/collapse compose project |
+| `1-4` | Switch between containers/volumes/images/networks |
+| `j` / `k` / `↓` / `↑` | Move cursor down/up |
+| `g` / `G` | Jump to top/bottom |
+| `space` / `enter` | Toggle project expansion |
+| `esc` | Go back / close view |
 
-### Container Actions
+### Command Mode
+
+Press `:` to enter command mode, then type:
+
+| Command | Action |
+|---------|--------|
+| `:q` / `:quit` | Quit application |
+| `:s` / `:start` | Start selected container |
+| `:S` / `:stop` | Stop selected container |
+| `:help` / `:h` | Show help window |
+| `:noh` | Clear search highlighting |
+
+### Container Actions (Details View)
 
 | Key | Action |
 |-----|--------|
-| `s` | Start selected container |
-| `S` | Stop selected container |
-| `r` | Restart selected container |
-| `d` | Delete selected container |
-| `e` | Exec into container (interactive shell) |
-
-### Views
-
-| Key | Action |
-|-----|--------|
-| `l` | View container logs |
+| `r` | Restart container |
+| `d` | Delete container/volume/image |
+| `l` | View logs |
+| `e` | Execute shell (docker exec) |
 | `p` | View port mappings |
 | `v` | View environment variables |
-| `o` | Open selected port in browser (from ports view) |
-| `esc` | Go back to details view |
+| `t` | View/refresh stats |
+| `i` | View inspect (JSON) |
 
-### Application
+### Logs View
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit application |
-| `ctrl+c` | Force quit |
+| `j` / `k` | Scroll logs |
+| `g` / `G` | Jump to top/bottom |
+| `?` | Search in logs |
+| `n` / `N` | Next/previous search result |
+| `:noh` | Clear search highlighting |
+| `esc` | Back to details |
 
-## Usage
+### Ports View
 
-### Basic Workflow
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Select port |
+| `o` / `enter` | Open port in browser |
+| `esc` | Back to details |
 
-1. **Navigate**: Use `j/k` to move through containers
-2. **Expand Compose**: Press `enter` on a compose project to see all containers
-3. **View Details**: Container details show in the right panel
-4. **Quick Actions**:
-   - Press `s` to start a stopped container
-   - Press `S` to stop a running container
-   - Press `e` to open a shell inside the container
-   - Press `l` to view logs
-   - Press `p` to see port mappings
-   - Press `v` to see environment variables
+### Stats View
 
-### Port Mapping & Browser
+| Key | Action |
+|-----|--------|
+| `t` | Refresh stats |
+| `esc` | Back to details |
 
-1. Select a container
-2. Press `p` to view its port mappings
-3. Use `j/k` to select a port
-4. Press `o` or `enter` to open `http://localhost:[port]` in your browser
-5. Works with common HTTP ports (80, 8080, 3000, 5000, etc.)
+## 🎯 Features in Detail
+
+### Docker Compose Integration
+
+GDocker automatically detects and groups containers by their compose project:
+
+```
+▼ my-project (3 containers)
+  ● web
+  ● database
+  ● cache
+```
+
+Press `space` or `enter` to expand/collapse projects.
+
+### Smart Log Search
+
+1. Press `l` to view container logs
+2. Press `?` to start searching
+3. Type your search term and press `Enter`
+4. Navigate results with `n` (next) and `N` (previous)
+5. Use `:noh` to clear highlighting
+
+### Port Management
+
+1. Select a container and press `p`
+2. Navigate ports with `j/k`
+3. Press `o` or `enter` to open `http://localhost:[port]` in your browser
+4. Works with any mapped HTTP port
 
 ### Interactive Shell
 
 1. Select a running container
 2. Press `e` to exec into it
-3. The TUI suspends and gives you an interactive shell
-4. Type `exit` or press `Ctrl+D` to return to the TUI
-5. Automatically detects available shells (`/bin/bash`, `/bin/sh`, `/bin/ash`)
+3. Automatically detects available shells (`bash`, `sh`, `ash`)
+4. Type `exit` to return to GDocker
 
-## Project Structure
+### Real-time Stats
+
+1. Select a running container
+2. Press `t` to view live stats
+3. Shows CPU %, memory usage, network I/O, block I/O, and PIDs
+4. Press `t` again to refresh
+
+### Container Inspect
+
+1. Select a container
+2. Press `i` to view full JSON configuration
+3. Scroll through with `j/k` or `g/G`
+
+## 🏗️ Project Structure
 
 ```
 gdocker/
-├── main.go         # Single-file implementation (~1000 lines)
-├── go.mod          # Go module definition
-├── go.sum          # Dependency checksums
-├── gdocker         # Compiled binary
-└── README.md       # This file
+├── main.go              # Application entry point
+├── models/
+│   ├── models.go        # Data structures and types
+│   ├── update.go        # State management and key handlers
+│   ├── state.go         # Future architecture (composition)
+│   └── builder.go       # Model builder pattern
+├── docker/
+│   ├── operations.go    # Docker API operations
+│   └── information.go   # Data loading functions
+├── ui/
+│   └── ui.go           # Rendering and UI components
+├── Makefile            # Build and install targets
+└── README.md           # This file
 ```
 
-## Dependencies
+## 🛠️ Development
+
+### Building
+
+```bash
+make build          # Build binary
+make install        # Install to /usr/local/bin
+make uninstall      # Remove from system
+```
+
+### Dependencies
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
-- [Bubbles](https://github.com/charmbracelet/bubbles) - TUI components
-- [Moby/Docker](https://github.com/moby/moby) - Docker client SDK
+- [Docker SDK](https://github.com/moby/moby) - Docker API client
 
-## Screenshots
+### Code Organization
 
+The project follows a clean architecture with separation of concerns:
+
+- **models/** - Core business logic and state management
+- **docker/** - Docker API interactions
+- **ui/** - View rendering and styling
+- **main.go** - Application initialization
+
+Function pointers are used to avoid circular imports while maintaining clean package boundaries.
+
+## 🎨 Screenshots
+
+### Main View
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Docker TUI                                                         │
-├──────────────────┬──────────────────────────────────────────────────┤
-│                  │                                                  │
-│  COMPOSE         │  Container Details                               │
-│  ▼ my-app (8)    │                                                  │
-│    ● nginx       │  Name: nginx                                     │
-│    ● postgres    │  Status: Running                                 │
-│    ● redis       │  Image: nginx:latest                             │
-│                  │  Ports: 3 mapped                                 │
-│                  │                                                  │
-│                  │  l: logs • p: ports • v: env • e: exec           │
-│                  │                                                  │
-├──────────────────┴──────────────────────────────────────────────────┤
-│  j/k: nav • s: start • S: stop • p: ports • v: env • e: exec       │
-└─────────────────────────────────────────────────────────────────────┘
+╭──────────────────────────────────────────────────────────────────╮
+│ 🐳 GDocker    Containers: 8 (5 running)  Volumes: 12  Images: 20 │
+├─────────────────────────┬────────────────────────────────────────┤
+│ Containers [8]          │ Details                                │
+│                         │                                        │
+│ ▼ coding-agent-workflow │ Name: coding-agent-workflow-web        │
+│   ● web                 │ Status: Running                        │
+│   ● database            │ Image: nginx:alpine                    │
+│   ● redis               │ ID: 9cf427...                          │
+│ ▼ myapp                 │ Project: coding-agent-workflow         │
+│   ● app                 │ Created: 2 days ago                    │
+│   ■ worker              │                                        │
+│ ● standalone-nginx      │ Ports: 1 mapped                        │
+│                         │                                        │
+├─────────────────────────┴────────────────────────────────────────┤
+│ :s: start • :S: stop • r: restart • d: delete • l: logs • :: cmd │
+╰──────────────────────────────────────────────────────────────────╯
 ```
 
-## Performance
+### Help Window
+Press `:help` to see the comprehensive help overlay with all commands and shortcuts.
 
-- **Single file**: ~1050 lines of Go
-- **Binary size**: ~11MB
-- **Memory usage**: Minimal (native Go)
-- **Startup time**: Instant
+## 🚀 Performance
+
+- **Binary Size**: ~12MB (statically linked)
+- **Memory Usage**: < 20MB typical
+- **Startup Time**: Instant
+- **Language**: Pure Go (no runtime dependencies)
+
+## 📋 Roadmap
+
+- [ ] Browse volume contents
+- [ ] Follow logs in real-time (tail -f)
+- [ ] Network management operations
+- [ ] Container creation wizard
+- [ ] Export/import configurations
+- [ ] Multi-container actions
+- [ ] Custom color themes
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes:
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - Excellent TUI framework
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Beautiful terminal styling
+- [Lazydocker](https://github.com/jesseduffield/lazydocker) - Inspiration for the project
+- The Docker community for amazing tools and documentation
 
 ## License
 
-MIT
+- GitHub: [@Gandalfalex](https://github.com/Gandalfalex)
+- Issues: [GitHub Issues](https://github.com/Gandalfalex/gdocker/issues)
 
-## Contributing
+---
 
 This is a personal project, but feel free to fork and modify!
