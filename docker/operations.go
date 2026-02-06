@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"gdocker/config"
 	"gdocker/models"
 	"io"
 	"os/exec"
@@ -304,6 +305,13 @@ func OpenPortInBrowser(m *models.Model) tea.Cmd {
 }
 
 func InitialModel() (models.Model, error) {
+	// Load keybindings config
+	keyBindings, err := config.Load()
+	if err != nil {
+		// If config loading fails, use defaults
+		keyBindings = config.Default()
+	}
+
 	// Connect to Docker
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -311,6 +319,7 @@ func InitialModel() (models.Model, error) {
 	}
 
 	m := models.Model{
+		KeyBindings:  keyBindings,
 		DockerClient: cli,
 		ViewMode:     models.ViewDetails,
 		NavMode:      models.NavContainers,
@@ -397,9 +406,10 @@ func LoadStats(m *models.Model) tea.Cmd {
 		// Calculate block I/O
 		var readBytes, writeBytes uint64
 		for _, bio := range v.BlkioStats.IoServiceBytesRecursive {
-			if bio.Op == "read" || bio.Op == "Read" {
+			switch bio.Op {
+			case "read", "Read":
 				readBytes += bio.Value
-			} else if bio.Op == "write" || bio.Op == "Write" {
+			case "write", "Write":
 				writeBytes += bio.Value
 			}
 		}

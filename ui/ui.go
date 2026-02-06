@@ -155,17 +155,11 @@ func RenderList(m *models.Model, width, height int) string {
 
 	if len(m.Items) > maxVisible {
 		// Center cursor in viewport
-		start = m.Cursor - maxVisible/2
-		if start < 0 {
-			start = 0
-		}
+		start = max(m.Cursor-maxVisible/2, 0)
 		end = start + maxVisible
 		if end > len(m.Items) {
 			end = len(m.Items)
-			start = end - maxVisible
-			if start < 0 {
-				start = 0
-			}
+			start = max(end-maxVisible, 0)
 		}
 	}
 
@@ -541,10 +535,7 @@ func RenderLogs(m *models.Model, width, height int) string {
 	}
 
 	// Calculate visible window
-	maxVisible := height - 5
-	if maxVisible < 1 {
-		maxVisible = 1
-	}
+	maxVisible := max(height-5, 1)
 
 	// Ensure scroll position is valid
 	scrollPos := m.LogScroll
@@ -556,19 +547,13 @@ func RenderLogs(m *models.Model, width, height int) string {
 	}
 
 	// Calculate start position to keep cursor centered
-	start := scrollPos - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(scrollPos-maxVisible/2, 0)
 
 	end := start + maxVisible
 	if end > len(m.Logs) {
 		end = len(m.Logs)
 		// Adjust start if we're at the end
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
+		start = max(end-maxVisible, 0)
 	}
 
 	// Create a map of search result lines for quick lookup
@@ -646,12 +631,12 @@ func highlightSearchTerm(line, query string) string {
 	}
 
 	// Highlight all occurrences
-	result := ""
+	var result strings.Builder
 	lastIdx := 0
 
 	for idx != -1 {
 		// Add text before match
-		result += line[lastIdx:idx]
+		result.WriteString(line[lastIdx:idx])
 
 		// Add highlighted match
 		match := line[idx : idx+len(query)]
@@ -659,7 +644,7 @@ func highlightSearchTerm(line, query string) string {
 			Foreground(lipgloss.Color("#000000")).
 			Background(lipgloss.Color("#ffff00")).
 			Render(match)
-		result += highlighted
+		result.WriteString(highlighted)
 
 		lastIdx = idx + len(query)
 		idx = strings.Index(lowerLine[lastIdx:], lowerQuery)
@@ -669,9 +654,9 @@ func highlightSearchTerm(line, query string) string {
 	}
 
 	// Add remaining text
-	result += line[lastIdx:]
+	result.WriteString(line[lastIdx:])
 
-	return result
+	return result.String()
 }
 
 func RenderStats(m *models.Model, width, height int) string {
@@ -742,10 +727,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 	lines := strings.Split(m.InspectData, "\n")
 
 	// Calculate visible window
-	maxVisible := height - 5
-	if maxVisible < 1 {
-		maxVisible = 1
-	}
+	maxVisible := max(height-5, 1)
 
 	// Ensure scroll position is valid
 	scrollPos := m.LogScroll
@@ -757,18 +739,12 @@ func RenderInspect(m *models.Model, width, height int) string {
 	}
 
 	// Calculate start position to keep cursor centered
-	start := scrollPos - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(scrollPos-maxVisible/2, 0)
 
 	end := start + maxVisible
 	if end > len(lines) {
 		end = len(lines)
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
+		start = max(end-maxVisible, 0)
 	}
 
 	// Show JSON lines
@@ -836,10 +812,7 @@ func RenderHeader(m *models.Model, width int) string {
 	right := resourceStyle.Render(resources)
 
 	// Calculate spacing
-	spacerWidth := width - lipgloss.Width(left) - lipgloss.Width(right) - 4
-	if spacerWidth < 0 {
-		spacerWidth = 0
-	}
+	spacerWidth := max(width-lipgloss.Width(left)-lipgloss.Width(right)-4, 0)
 	spacer := strings.Repeat(" ", spacerWidth)
 
 	header := lipgloss.JoinHorizontal(lipgloss.Left, " ", left, spacer, right, " ")

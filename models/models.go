@@ -1,12 +1,14 @@
 package models
 
 import (
+	"gdocker/config"
 	"time"
 
 	"github.com/moby/moby/client"
 )
 
 type Model struct {
+	KeyBindings     *config.KeyBindings
 	Containers      []Container
 	Standalone      []Container
 	Projects        []ComposeGroup

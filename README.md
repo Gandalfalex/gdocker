@@ -170,6 +170,84 @@ Press `space` or `enter` to expand/collapse projects.
 2. Press `i` to view full JSON configuration
 3. Scroll through with `j/k` or `g/G`
 
+## ⚙️ Configuration
+
+GDocker supports custom keybindings through a YAML configuration file.
+
+### Creating a Config File
+
+1. Copy the example configuration:
+   ```bash
+   cp config.yaml.example ~/.config/gdocker/config.yaml
+   ```
+
+2. Edit the file to customize your keybindings:
+   ```bash
+   nano ~/.config/gdocker/config.yaml
+   ```
+
+### Configuration Format
+
+The config file uses YAML format. Here's an example:
+
+```yaml
+keybindings:
+  navigation:
+    up: ["k", "up"]              # Move cursor up
+    down: ["j", "down"]          # Move cursor down
+    top: ["g"]                   # Jump to top
+    bottom: ["G"]                # Jump to bottom
+    toggle_expand: [" ", "enter"] # Toggle project expansion
+    switch_container: ["1"]      # Switch to containers view
+    switch_volume: ["2"]         # Switch to volumes view
+    switch_image: ["3"]          # Switch to images view
+    switch_network: ["4"]        # Switch to networks view
+
+  container:
+    restart: ["r"]               # Restart container
+    delete: ["d"]                # Delete container/volume/image
+    logs: ["l"]                  # View logs
+    exec: ["e"]                  # Execute shell
+    ports: ["p"]                 # View ports
+    env: ["v"]                   # View environment variables
+    stats: ["t"]                 # View stats
+    inspect: ["i"]               # View inspect JSON
+    open_port: ["o", "enter"]    # Open port in browser
+    refresh_stats: ["t"]         # Refresh stats
+
+  logs:
+    search: ["?"]                # Start search
+    next_result: ["n"]           # Next search result
+    prev_result: ["N"]           # Previous search result
+
+  commands:
+    enter: [":"]                 # Enter command mode
+
+  views:
+    back: ["esc"]                # Go back / close view
+
+  general:
+    force_quit: ["ctrl+c"]       # Force quit application
+```
+
+### Multiple Key Bindings
+
+You can assign multiple keys to the same action by using an array:
+
+```yaml
+navigation:
+  down: ["j", "down", "ctrl+n"]  # All three keys will move down
+```
+
+### Default Configuration
+
+If no config file is found at `~/.config/gdocker/config.yaml`, GDocker uses the default vim-like keybindings shown in the keybindings section above.
+
+### Config Location
+
+- **Linux/macOS**: `~/.config/gdocker/config.yaml`
+- **Example file**: `config.yaml.example` in the repository
+
 ## 🏗️ Project Structure
 
 ```
@@ -185,6 +263,9 @@ gdocker/
 │   └── information.go   # Data loading functions
 ├── ui/
 │   └── ui.go           # Rendering and UI components
+├── config/
+│   └── keybindings.go  # Configuration and keybinding management
+├── config.yaml.example # Example configuration file
 ├── Makefile            # Build and install targets
 └── README.md           # This file
 ```
@@ -204,6 +285,7 @@ make uninstall      # Remove from system
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
 - [Docker SDK](https://github.com/moby/moby) - Docker API client
+- [YAML v3](https://github.com/go-yaml/yaml) - Configuration file parsing
 
 ### Code Organization
 
@@ -212,6 +294,7 @@ The project follows a clean architecture with separation of concerns:
 - **models/** - Core business logic and state management
 - **docker/** - Docker API interactions
 - **ui/** - View rendering and styling
+- **config/** - Configuration and keybinding management
 - **main.go** - Application initialization
 
 Function pointers are used to avoid circular imports while maintaining clean package boundaries.

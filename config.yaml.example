@@ -1,0 +1,47 @@
+# GDocker Configuration File
+# Place this file at ~/.config/gdocker/config.yaml to customize keybindings
+
+keybindings:
+  navigation:
+    up: ["k", "up"]              # Move cursor up
+    down: ["j", "down"]          # Move cursor down
+    top: ["g"]                   # Jump to top
+    bottom: ["G"]                # Jump to bottom
+    toggle_expand: [" ", "enter"] # Toggle project expansion
+    switch_container: ["1"]      # Switch to containers view
+    switch_volume: ["2"]         # Switch to volumes view
+    switch_image: ["3"]          # Switch to images view
+    switch_network: ["4"]        # Switch to networks view
+
+  container:
+    restart: ["r"]               # Restart container
+    delete: ["d"]                # Delete container/volume/image
+    logs: ["l"]                  # View logs
+    exec: ["e"]                  # Execute shell
+    ports: ["p"]                 # View ports
+    env: ["v"]                   # View environment variables
+    stats: ["t"]                 # View stats
+    inspect: ["i"]               # View inspect JSON
+    open_port: ["o", "enter"]    # Open port in browser (in ports view)
+    refresh_stats: ["t"]         # Refresh stats (in stats view)
+
+  views:
+    back: ["esc"]                # Go back / close view
+
+  logs:
+    search: ["?"]                # Start search
+    next_result: ["n"]           # Next search result
+    prev_result: ["N"]           # Previous search result
+
+  commands:
+    enter: [":"]                 # Enter command mode
+
+  general:
+    force_quit: ["ctrl+c"]       # Force quit application
+
+# Command mode commands (cannot be customized via keybindings):
+# :q, :quit     - Quit application
+# :s, :start    - Start container
+# :S, :stop     - Stop container
+# :help, :h     - Show help
+# :noh          - Clear search highlighting
