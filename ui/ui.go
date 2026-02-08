@@ -2,12 +2,18 @@ package ui
 
 import (
 	"fmt"
+	"gdocker/config"
 	"gdocker/models"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+type helpEntry struct {
+	key  string
+	desc string
+}
 
 func init() {
 	// Set function pointer to avoid circular imports
@@ -93,7 +99,9 @@ func RenderView(m *models.Model) string {
 			statusText = "j/k: scroll • g/G: top/bottom • esc: back • :: cmd"
 		case models.ViewDetails:
 			// Show detailed instructions for the details view
-			if m.NavMode == models.NavContainers && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+			if len(m.Items) == 0 {
+				statusText = "1-4: switch resource • :help: shortcuts • :q: quit"
+			} else if m.NavMode == models.NavContainers && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
 				statusText = ":s: start • :S: stop • r: restart • d: delete • l: logs • e: exec • p: ports • v: env • t: stats • i: inspect • :: cmd • :help"
 			} else if m.NavMode == models.NavContainers {
 				statusText = "1-4: nav • j/k: move • space: expand • :s: start • :S: stop • r: restart • d: del • l: logs • e: exec • :: cmd • :help"
@@ -118,6 +126,7 @@ func RenderView(m *models.Model) string {
 
 func RenderList(m *models.Model, width, height int) string {
 	var s strings.Builder
+	cfg := uiConfig(m)
 
 	// Show appropriate title based on navigation mode
 	var titleText string
@@ -144,7 +153,12 @@ func RenderList(m *models.Model, width, height int) string {
 	s.WriteString(title + "\n\n")
 
 	if len(m.Items) == 0 {
-		s.WriteString(emptyText)
+		emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))
+		s.WriteString(emptyStyle.Render(emptyText) + "\n\n")
+		s.WriteString(emptyStyle.Render("Try:\n"))
+		s.WriteString(emptyStyle.Render("• start Docker daemon\n"))
+		s.WriteString(emptyStyle.Render("• switch resources with 1-4\n"))
+		s.WriteString(emptyStyle.Render("• open :help for all commands"))
 		return s.String()
 	}
 
@@ -285,11 +299,19 @@ func RenderList(m *models.Model, width, height int) string {
 		}
 	}
 
+	if cfg.ShowListHelpHint {
+		s.WriteString("\n")
+		s.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorMuted)).
+			Render(":help for shortcuts"))
+	}
+
 	return s.String()
 }
 
 func RenderDetails(m *models.Model, width, height int) string {
 	var s strings.Builder
+	cfg := uiConfig(m)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
@@ -299,7 +321,12 @@ func RenderDetails(m *models.Model, width, height int) string {
 
 	// Get selected item
 	if m.Cursor < 0 || m.Cursor >= len(m.Items) {
-		s.WriteString("No selection")
+		emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))
+		s.WriteString(emptyStyle.Render("No selection") + "\n\n")
+		s.WriteString(emptyStyle.Render("Quick start:\n"))
+		s.WriteString(emptyStyle.Render("• 1-4 to switch resources\n"))
+		s.WriteString(emptyStyle.Render("• j/k to move cursor\n"))
+		s.WriteString(emptyStyle.Render("• :help to open full help"))
 		return s.String()
 	}
 
@@ -316,9 +343,25 @@ func RenderDetails(m *models.Model, width, height int) string {
 			}
 		}
 		s.WriteString(renderLabel("Running") + fmt.Sprintf("%d/%d", running, len(item.Project.Containers)) + "\n")
+		s.WriteString("\n")
+		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("Containers in project") + "\n")
+		for i, c := range item.Project.Containers {
+			if i >= cfg.MaxProjectPreviewItems {
+				s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("...more containers omitted") + "\n")
+				break
+			}
+			status := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(GetContainerStatusColor(c.State))).
+				Render(GetContainerStatusIcon(c.State))
+			s.WriteString(fmt.Sprintf("  %s %s\n", status, c.Name))
+		}
 
 	} else if item.IsContainer {
 		c := item.Container
+
+		s.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorMuted)).
+			Render("Actions: l logs • e exec • p ports • v env • t stats • i inspect") + "\n\n")
 
 		s.WriteString(renderLabel("Name") + c.Name + "\n")
 
@@ -342,6 +385,21 @@ func RenderDetails(m *models.Model, width, height int) string {
 		// Show port summary
 		if len(c.Ports) > 0 {
 			s.WriteString("\n" + renderLabel("Ports") + fmt.Sprintf("%d mapped", len(c.Ports)) + "\n")
+			for i, p := range c.Ports {
+				if i >= cfg.MaxContainerPortPreview {
+					s.WriteString("  ...\n")
+					break
+				}
+				if p.PublicPort > 0 {
+					host := "localhost"
+					if p.IP != "" && p.IP != "0.0.0.0" {
+						host = p.IP
+					}
+					s.WriteString(fmt.Sprintf("  %s:%d -> %d/%s\n", host, p.PublicPort, p.PrivatePort, p.Type))
+				} else {
+					s.WriteString(fmt.Sprintf("  %d/%s\n", p.PrivatePort, p.Type))
+				}
+			}
 		}
 
 	} else if item.IsVolume {
@@ -367,9 +425,15 @@ func RenderDetails(m *models.Model, width, height int) string {
 
 		if len(img.RepoTags) > 0 {
 			s.WriteString(renderLabel("Tags") + "\n")
+			tagCount := 0
 			for _, tag := range img.RepoTags {
 				if tag != "<none>:<none>" {
 					fmt.Fprintf(&s, "  %s\n", tag)
+					tagCount++
+					if tagCount >= cfg.MaxImageTagPreview {
+						s.WriteString("  ...\n")
+						break
+					}
 				}
 			}
 		}
@@ -406,18 +470,14 @@ func RenderDetails(m *models.Model, width, height int) string {
 func RenderPorts(m *models.Model, width, height int) string {
 	var s strings.Builder
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorTitle)).
-		Render("Port Mappings")
-	s.WriteString(title + "\n\n")
-
 	if m.Cursor < 0 || m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
+		s.WriteString(renderPaneHeader("Port Mappings", "No container selected"))
 		s.WriteString("No container selected")
 		return s.String()
 	}
 
 	c := m.Items[m.Cursor].Container
+	s.WriteString(renderPaneHeader("Port Mappings", fmt.Sprintf("%s • %d published", c.Name, len(c.Ports))))
 	if len(c.Ports) == 0 {
 		s.WriteString("No ports mapped")
 		return s.String()
@@ -431,7 +491,11 @@ func RenderPorts(m *models.Model, width, height int) string {
 
 		var portStr string
 		if port.PublicPort > 0 {
-			portStr = fmt.Sprintf("%s:%d -> %d/%s", port.IP, port.PublicPort, port.PrivatePort, port.Type)
+			host := "localhost"
+			if port.IP != "" && port.IP != "0.0.0.0" {
+				host = port.IP
+			}
+			portStr = fmt.Sprintf("%s:%d -> %d/%s", host, port.PublicPort, port.PrivatePort, port.Type)
 		} else {
 			portStr = fmt.Sprintf("%d/%s", port.PrivatePort, port.Type)
 		}
@@ -460,18 +524,14 @@ func RenderPorts(m *models.Model, width, height int) string {
 func RenderEnv(m *models.Model, width, height int) string {
 	var s strings.Builder
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorTitle)).
-		Render("Environment Variables")
-	s.WriteString(title + "\n\n")
-
 	if m.Cursor < 0 || m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
+		s.WriteString(renderPaneHeader("Environment Variables", "No container selected"))
 		s.WriteString("No container selected")
 		return s.String()
 	}
 
 	c := m.Items[m.Cursor].Container
+	s.WriteString(renderPaneHeader("Environment Variables", fmt.Sprintf("%s • %d vars", c.Name, len(c.Env))))
 	if len(c.Env) == 0 {
 		s.WriteString("No environment variables")
 		return s.String()
@@ -490,8 +550,12 @@ func RenderEnv(m *models.Model, width, height int) string {
 			key := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Render(parts[0])
 			value := parts[1]
 			// Truncate long values
-			if len(value) > width-len(parts[0])-10 {
-				value = value[:width-len(parts[0])-13] + "..."
+			truncateAt := width - len(parts[0]) - 10
+			if truncateAt < 8 {
+				truncateAt = 8
+			}
+			if len(value) > truncateAt {
+				value = value[:truncateAt-3] + "..."
 			}
 			fmt.Fprintf(&s, "%s=%s\n", key, value)
 		} else {
@@ -504,20 +568,26 @@ func RenderEnv(m *models.Model, width, height int) string {
 
 func RenderLogs(m *models.Model, width, height int) string {
 	var s strings.Builder
+	cfg := uiConfig(m)
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorTitle)).
-		Render("Logs")
-	s.WriteString(title + "\n\n")
+	containerName := "container"
+	if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+		containerName = m.Items[m.Cursor].Container.Name
+	}
+	s.WriteString(renderPaneHeader("Logs", fmt.Sprintf("%s • %d lines", containerName, len(m.Logs))))
 
 	if len(m.Logs) == 0 {
 		s.WriteString("No logs available")
 		return s.String()
 	}
 
+	if m.SearchQuery != "" {
+		searchStatus := fmt.Sprintf("Search: %q (%d matches)", m.SearchQuery, len(m.SearchResults))
+		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(searchStatus) + "\n\n")
+	}
+
 	// Calculate visible window
-	maxVisible := max(height-5, 1)
+	maxVisible := max(height-7, 1)
 
 	// Ensure scroll position is valid
 	scrollPos := m.LogScroll
@@ -547,9 +617,23 @@ func RenderLogs(m *models.Model, width, height int) string {
 	// Show logs in window
 	for i := start; i < end; i++ {
 		line := m.Logs[i]
+		gutter := ""
+		if cfg.ShowLineNumbers {
+			gutter = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorMuted)).
+				Render(fmt.Sprintf("%4d ", i+1))
+		}
+
 		// Truncate long lines to fit width
-		if len(line) > width-4 {
-			line = line[:width-4] + "..."
+		maxLineWidth := width - 4
+		if cfg.ShowLineNumbers {
+			maxLineWidth = width - 9
+		}
+		if maxLineWidth < 12 {
+			maxLineWidth = 12
+		}
+		if len(line) > maxLineWidth {
+			line = line[:maxLineWidth-3] + "..."
 		}
 
 		// Highlight search matches in the line
@@ -561,14 +645,17 @@ func RenderLogs(m *models.Model, width, height int) string {
 			// Highlight current line
 			line = lipgloss.NewStyle().
 				Background(lipgloss.Color(ColorHighlight)).
-				Render(line)
+				Render(gutter + line)
+		} else {
+			line = gutter + line
 		}
 		s.WriteString(line + "\n")
 	}
 
 	// Show position indicator
 	s.WriteString("\n")
-	indicator := fmt.Sprintf("Line %d/%d (%d-%d)", scrollPos+1, len(m.Logs), start+1, end)
+	progress := int(float64(scrollPos+1) / float64(len(m.Logs)) * 100)
+	indicator := fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(m.Logs), start+1, end, progress)
 	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(indicator))
 
 	return s.String()
@@ -644,34 +731,32 @@ func highlightSearchTerm(line, query string) string {
 func RenderStats(m *models.Model, width, height int) string {
 	var s strings.Builder
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorTitle)).
-		Render("Container Stats")
-	s.WriteString(title + "\n\n")
+	containerName := "container"
+	if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+		containerName = m.Items[m.Cursor].Container.Name
+	}
+	s.WriteString(renderPaneHeader("Container Stats", containerName))
 
 	if m.Stats == nil {
 		s.WriteString("Loading stats...")
 		return s.String()
 	}
 
-	// CPU Usage
-	s.WriteString(renderLabel("CPU Usage") + m.Stats.CPUPerc + "\n")
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Bold(true).Render("Runtime") + "\n")
+	s.WriteString(renderMetricRow("CPU", m.Stats.CPUPerc))
+	s.WriteString(renderMetricRow("PIDs", m.Stats.PIDs))
+	s.WriteString("\n")
 
-	// Memory Usage
-	s.WriteString(renderLabel("Memory Usage") + m.Stats.MemUsage + "\n")
-	s.WriteString(renderLabel("Memory %") + m.Stats.MemPerc + "\n\n")
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Bold(true).Render("Memory") + "\n")
+	s.WriteString(renderMetricRow("Usage", m.Stats.MemUsage))
+	s.WriteString(renderMetricRow("Percent", m.Stats.MemPerc))
+	s.WriteString("\n")
 
-	// Network I/O
-	s.WriteString(renderLabel("Network I/O") + m.Stats.NetIO + "\n")
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  (Received / Transmitted)") + "\n\n")
-
-	// Block I/O
-	s.WriteString(renderLabel("Block I/O") + m.Stats.BlockIO + "\n")
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  (Read / Write)") + "\n\n")
-
-	// PIDs
-	s.WriteString(renderLabel("PIDs") + m.Stats.PIDs + "\n")
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Bold(true).Render("I/O") + "\n")
+	s.WriteString(renderMetricRow("Network", m.Stats.NetIO))
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  rx/tx") + "\n")
+	s.WriteString(renderMetricRow("Block", m.Stats.BlockIO))
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  read/write") + "\n")
 
 	s.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("Press 't' to refresh stats"))
 
@@ -693,23 +778,24 @@ func formatBytes(bytes uint64) string {
 
 func RenderInspect(m *models.Model, width, height int) string {
 	var s strings.Builder
-
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorTitle)).
-		Render("Container Inspect (JSON)")
-	s.WriteString(title + "\n\n")
+	cfg := uiConfig(m)
 
 	if m.InspectData == "" {
+		s.WriteString(renderPaneHeader("Container Inspect (JSON)", "No inspect data loaded"))
 		s.WriteString("No inspect data loaded")
 		return s.String()
 	}
 
 	// Split JSON into lines
 	lines := strings.Split(m.InspectData, "\n")
+	containerName := "container"
+	if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+		containerName = m.Items[m.Cursor].Container.Name
+	}
+	s.WriteString(renderPaneHeader("Container Inspect (JSON)", fmt.Sprintf("%s • %d lines", containerName, len(lines))))
 
 	// Calculate visible window
-	maxVisible := max(height-5, 1)
+	maxVisible := max(height-7, 1)
 
 	// Ensure scroll position is valid
 	scrollPos := m.LogScroll
@@ -732,23 +818,39 @@ func RenderInspect(m *models.Model, width, height int) string {
 	// Show JSON lines
 	for i := start; i < end; i++ {
 		line := lines[i]
+		gutter := ""
+		if cfg.ShowLineNumbers {
+			gutter = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorMuted)).
+				Render(fmt.Sprintf("%4d ", i+1))
+		}
 		// Truncate long lines to fit width
-		if len(line) > width-4 {
-			line = line[:width-4] + "..."
+		maxLineWidth := width - 4
+		if cfg.ShowLineNumbers {
+			maxLineWidth = width - 9
+		}
+		if maxLineWidth < 12 {
+			maxLineWidth = 12
+		}
+		if len(line) > maxLineWidth {
+			line = line[:maxLineWidth-3] + "..."
 		}
 
 		if i == scrollPos {
 			// Highlight current line
 			line = lipgloss.NewStyle().
 				Background(lipgloss.Color(ColorHighlight)).
-				Render(line)
+				Render(gutter + line)
+		} else {
+			line = gutter + line
 		}
 		s.WriteString(line + "\n")
 	}
 
 	// Show position indicator
 	s.WriteString("\n")
-	indicator := fmt.Sprintf("Line %d/%d (%d-%d)", scrollPos+1, len(lines), start+1, end)
+	progress := int(float64(scrollPos+1) / float64(len(lines)) * 100)
+	indicator := fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(lines), start+1, end, progress)
 	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(indicator))
 
 	return s.String()
@@ -756,6 +858,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 
 func RenderHeader(m *models.Model, width int) string {
 	var running, stopped, total int
+	cfg := uiConfig(m)
 
 	// Count containers by state
 	for _, c := range m.Containers {
@@ -791,6 +894,12 @@ func RenderHeader(m *models.Model, width int) string {
 
 	// Combine all parts
 	left := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", stats)
+	if cfg.ShowHeaderContext {
+		context := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorMuted)).
+			Render(fmt.Sprintf("[%s • %s]", navModeLabel(m.NavMode), viewModeLabel(m.ViewMode)))
+		left = lipgloss.JoinHorizontal(lipgloss.Left, title, " ", context, "  ", stats)
+	}
 	right := resourceStyle.Render(resources)
 
 	// Calculate spacing
@@ -806,120 +915,92 @@ func RenderHeader(m *models.Model, width int) string {
 		Render(header)
 }
 
+func navModeLabel(mode models.NavigationMode) string {
+	switch mode {
+	case models.NavContainers:
+		return "containers"
+	case models.NavVolumes:
+		return "volumes"
+	case models.NavImages:
+		return "images"
+	case models.NavNetworks:
+		return "networks"
+	default:
+		return "unknown"
+	}
+}
+
+func viewModeLabel(mode models.ViewMode) string {
+	switch mode {
+	case models.ViewDetails:
+		return "details"
+	case models.ViewLogs:
+		return "logs"
+	case models.ViewPorts:
+		return "ports"
+	case models.ViewEnv:
+		return "env"
+	case models.ViewStats:
+		return "stats"
+	case models.ViewVolumeBrowse:
+		return "volume"
+	case models.ViewInspect:
+		return "inspect"
+	default:
+		return "unknown"
+	}
+}
+
 func RenderHelp(m *models.Model, width, height int) string {
 	var s strings.Builder
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(ColorInfo)).
-		Render("GDocker - Help")
+	s.WriteString(renderPaneHeader("GDocker Help", "Keyboard and command reference"))
 
-	s.WriteString(title + "\n\n")
-
-	// Navigation section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("Navigation") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  1-4          Switch between containers, volumes, images, networks\n" +
-				"  j/k, ↓/↑     Move cursor up/down\n" +
-				"  g/G          Jump to top/bottom\n" +
-				"  space/enter  Toggle project expansion\n",
-		))
-
+	s.WriteString(renderHelpSection("Navigation", []helpEntry{
+		{key: "1-4", desc: "Switch between containers, volumes, images, networks"},
+		{key: "j/k, ↓/↑", desc: "Move cursor up/down"},
+		{key: "g/G", desc: "Jump to top/bottom"},
+		{key: "space/enter", desc: "Toggle project expansion"},
+	}))
 	s.WriteString("\n")
 
-	// Container actions section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("Container Actions") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  :s           Start container\n" +
-				"  :S           Stop container\n" +
-				"  r            Restart container\n" +
-				"  d            Delete container/volume/image\n" +
-				"  l            View logs\n" +
-				"  e            Execute shell (docker exec)\n" +
-				"  p            View port mappings\n" +
-				"  v            View environment variables\n" +
-				"  t            View stats (refresh with 't')\n" +
-				"  i            View inspect (JSON)\n",
-		))
-
+	s.WriteString(renderHelpSection("Container Actions", []helpEntry{
+		{key: ":s / :S", desc: "Start/stop container"},
+		{key: "r", desc: "Restart container"},
+		{key: "d", desc: "Delete container/volume/image"},
+		{key: "l", desc: "View logs"},
+		{key: "e", desc: "Execute shell (docker exec)"},
+		{key: "p", desc: "View port mappings"},
+		{key: "v", desc: "View environment variables"},
+		{key: "t", desc: "View/refresh stats"},
+		{key: "i", desc: "View inspect (JSON)"},
+	}))
 	s.WriteString("\n")
 
-	// Logs section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("Logs View") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  j/k          Scroll logs up/down\n" +
-				"  g/G          Jump to top/bottom\n" +
-				"  ?            Search in logs\n" +
-				"  n/N          Next/previous search result\n" +
-				"  :noh         Clear search highlighting\n",
-		))
-
+	s.WriteString(renderHelpSection("Logs View", []helpEntry{
+		{key: "j/k", desc: "Scroll logs up/down"},
+		{key: "g/G", desc: "Jump to top/bottom"},
+		{key: "?", desc: "Search in logs"},
+		{key: "n/N", desc: "Next/previous search result"},
+		{key: ":noh", desc: "Clear search highlighting"},
+	}))
 	s.WriteString("\n")
 
-	// Ports section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("Ports View") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  j/k          Select port\n" +
-				"  o/enter      Open selected port in browser\n",
-		))
-
+	s.WriteString(renderHelpSection("Ports View", []helpEntry{
+		{key: "j/k", desc: "Select port"},
+		{key: "o/enter", desc: "Open selected port in browser"},
+	}))
 	s.WriteString("\n")
 
-	// Commands section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("Commands") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  :q           Quit application\n" +
-				"  :help        Show this help\n" +
-				"  :s           Start container\n" +
-				"  :S           Stop container\n" +
-				"  :noh         Clear search highlighting\n",
-		))
-
+	s.WriteString(renderHelpSection("General", []helpEntry{
+		{key: ":q", desc: "Quit application"},
+		{key: ":help", desc: "Show this help"},
+		{key: "esc", desc: "Go back/close view"},
+		{key: "ctrl+c", desc: "Force quit"},
+		{key: ":", desc: "Enter command mode"},
+	}))
 	s.WriteString("\n")
-
-	// General section
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSuccess)).
-		Bold(true).
-		Render("General") + "\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorForeground)).
-		Render(
-			"  esc          Go back/close view\n" +
-				"  ctrl+c       Force quit\n" +
-				"  :            Enter command mode\n",
-		))
-
-	s.WriteString("\n")
-	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorMuted)).
-		Italic(true).
-		Render("Press esc to close this help"))
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Italic(true).Render("Press esc to close this help"))
 
 	helpContent := s.String()
 
@@ -933,4 +1014,56 @@ func RenderHelp(m *models.Model, width, height int) string {
 		Render(helpContent)
 
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, helpBox)
+}
+
+func renderPaneHeader(title, subtitle string) string {
+	titleStyled := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorTitle)).
+		Render(title)
+
+	if subtitle == "" {
+		return titleStyled + "\n\n"
+	}
+
+	subtitleStyled := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorMuted)).
+		Render(subtitle)
+
+	return titleStyled + "\n" + subtitleStyled + "\n\n"
+}
+
+func renderMetricRow(label, value string) string {
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorMuted)).
+		Bold(true)
+	return fmt.Sprintf("%s%s\n", labelStyle.Render(fmt.Sprintf("  %-8s ", label)), value)
+}
+
+func renderHelpSection(title string, entries []helpEntry) string {
+	var s strings.Builder
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorSuccess)).
+		Bold(true).
+		Render(title)
+	s.WriteString(header + "\n")
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorInfo)).
+		Bold(true)
+	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorForeground))
+
+	for _, entry := range entries {
+		key := keyStyle.Render(fmt.Sprintf("  %-12s", entry.key))
+		s.WriteString(key + " " + textStyle.Render(entry.desc) + "\n")
+	}
+
+	return s.String()
+}
+
+func uiConfig(m *models.Model) config.UIConfig {
+	if m != nil && m.UIConfig != nil {
+		return *m.UIConfig
+	}
+	return *config.DefaultUI()
 }

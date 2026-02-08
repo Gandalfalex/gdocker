@@ -305,11 +305,11 @@ func OpenPortInBrowser(m *models.Model) tea.Cmd {
 }
 
 func InitialModel() (models.Model, error) {
-	// Load keybindings config
-	keyBindings, err := config.Load()
+	// Load app config
+	appConfig, err := config.Load()
 	if err != nil {
-		// If config loading fails, use defaults
-		keyBindings = config.Default()
+		// If config loading fails, use defaults.
+		appConfig = config.DefaultAppConfig()
 	}
 
 	// Connect to Docker
@@ -319,7 +319,8 @@ func InitialModel() (models.Model, error) {
 	}
 
 	m := models.Model{
-		KeyBindings:  keyBindings,
+		KeyBindings:  &appConfig.KeyBindings,
+		UIConfig:     &appConfig.UI,
 		DockerClient: cli,
 		ViewMode:     models.ViewDetails,
 		NavMode:      models.NavContainers,

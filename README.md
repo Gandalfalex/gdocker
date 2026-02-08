@@ -172,7 +172,7 @@ Press `space` or `enter` to expand/collapse projects.
 
 ## ⚙️ Configuration
 
-GDocker supports custom keybindings through a YAML configuration file.
+GDocker supports custom keybindings and UI preferences through a YAML configuration file.
 
 ### Creating a Config File
 
@@ -181,7 +181,7 @@ GDocker supports custom keybindings through a YAML configuration file.
    cp config.yaml.example ~/.config/gdocker/config.yaml
    ```
 
-2. Edit the file to customize your keybindings:
+2. Edit the file to customize keybindings and UI behavior:
    ```bash
    nano ~/.config/gdocker/config.yaml
    ```
@@ -228,6 +228,14 @@ keybindings:
 
   general:
     force_quit: ["ctrl+c"]       # Force quit application
+
+ui:
+  show_header_context: true      # Show [resource • view] in header
+  show_list_help_hint: true      # Show ":help for shortcuts" in list pane
+  show_line_numbers: true        # Show line numbers in logs/inspect views
+  max_project_preview_items: 8   # Project details: max containers shown
+  max_container_port_preview: 4  # Container details: max ports shown
+  max_image_tag_preview: 6       # Image details: max tags shown
 ```
 
 ### Multiple Key Bindings
@@ -241,7 +249,7 @@ navigation:
 
 ### Default Configuration
 
-If no config file is found at `~/.config/gdocker/config.yaml`, GDocker uses the default vim-like keybindings shown in the keybindings section above.
+If no config file is found at `~/.config/gdocker/config.yaml`, GDocker uses default keybindings and UI settings.
 
 ### Config Location
 

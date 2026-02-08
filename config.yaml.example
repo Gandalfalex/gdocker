@@ -1,5 +1,5 @@
 # GDocker Configuration File
-# Place this file at ~/.config/gdocker/config.yaml to customize keybindings
+# Place this file at ~/.config/gdocker/config.yaml to customize keybindings and UI
 
 keybindings:
   navigation:
@@ -38,6 +38,14 @@ keybindings:
 
   general:
     force_quit: ["ctrl+c"]       # Force quit application
+
+ui:
+  show_header_context: true      # Show [resource • view] in header
+  show_list_help_hint: true      # Show ":help for shortcuts" in list pane
+  show_line_numbers: true        # Show line numbers in logs/inspect views
+  max_project_preview_items: 8   # Project details: max containers shown
+  max_container_port_preview: 4  # Container details: max ports shown
+  max_image_tag_preview: 6       # Image details: max tags shown
 
 # Command mode commands (cannot be customized via keybindings):
 # :q, :quit     - Quit application

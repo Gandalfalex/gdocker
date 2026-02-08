@@ -7,6 +7,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AppConfig is the root configuration structure loaded from config.yaml.
+type AppConfig struct {
+	KeyBindings KeyBindings `yaml:"keybindings"`
+	UI          UIConfig    `yaml:"ui"`
+}
+
 // KeyBindings holds all configurable key bindings
 type KeyBindings struct {
 	Navigation NavigationKeys `yaml:"navigation"`
@@ -60,6 +66,16 @@ type GeneralKeys struct {
 	ForceQuit []string `yaml:"force_quit"`
 }
 
+// UIConfig holds UX display preferences.
+type UIConfig struct {
+	ShowHeaderContext       bool `yaml:"show_header_context"`
+	ShowListHelpHint        bool `yaml:"show_list_help_hint"`
+	ShowLineNumbers         bool `yaml:"show_line_numbers"`
+	MaxProjectPreviewItems  int  `yaml:"max_project_preview_items"`
+	MaxContainerPortPreview int  `yaml:"max_container_port_preview"`
+	MaxImageTagPreview      int  `yaml:"max_image_tag_preview"`
+}
+
 // Default returns the default key bindings
 func Default() *KeyBindings {
 	return &KeyBindings{
@@ -103,38 +119,67 @@ func Default() *KeyBindings {
 	}
 }
 
-// Load loads key bindings from a config file, falling back to defaults
-func Load() (*KeyBindings, error) {
+// DefaultUI returns the default UX preferences.
+func DefaultUI() *UIConfig {
+	return &UIConfig{
+		ShowHeaderContext:       true,
+		ShowListHelpHint:        true,
+		ShowLineNumbers:         true,
+		MaxProjectPreviewItems:  8,
+		MaxContainerPortPreview: 4,
+		MaxImageTagPreview:      6,
+	}
+}
+
+// DefaultAppConfig returns a full default config.
+func DefaultAppConfig() *AppConfig {
+	return &AppConfig{
+		KeyBindings: *Default(),
+		UI:          *DefaultUI(),
+	}
+}
+
+// sanitize applies value bounds for numeric UI options.
+func (c *AppConfig) sanitize() {
+	if c.UI.MaxProjectPreviewItems < 1 {
+		c.UI.MaxProjectPreviewItems = 1
+	}
+	if c.UI.MaxContainerPortPreview < 1 {
+		c.UI.MaxContainerPortPreview = 1
+	}
+	if c.UI.MaxImageTagPreview < 1 {
+		c.UI.MaxImageTagPreview = 1
+	}
+}
+
+// Load loads app config from a config file, falling back to defaults.
+func Load() (*AppConfig, error) {
 	// Try to load from ~/.config/gdocker/config.yaml
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return Default(), nil
+		return DefaultAppConfig(), nil
 	}
 
 	configPath := filepath.Join(homeDir, ".config", "gdocker", "config.yaml")
 
 	// If config doesn't exist, return defaults
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return Default(), nil
+		return DefaultAppConfig(), nil
 	}
 
 	// Read config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return Default(), nil
+		return DefaultAppConfig(), nil
 	}
 
-	// Parse YAML
-	var config struct {
-		KeyBindings KeyBindings `yaml:"keybindings"`
+	// Parse YAML over defaults so missing fields keep sane values.
+	cfg := DefaultAppConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return DefaultAppConfig(), err
 	}
-
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return Default(), err
-	}
-
-	// Return loaded config
-	return &config.KeyBindings, nil
+	cfg.sanitize()
+	return cfg, nil
 }
 
 // Contains checks if a key is in the list of bindings
@@ -163,11 +208,7 @@ func SaveDefault() error {
 	}
 
 	// Create config structure
-	config := struct {
-		KeyBindings *KeyBindings `yaml:"keybindings"`
-	}{
-		KeyBindings: Default(),
-	}
+	config := DefaultAppConfig()
 
 	// Marshal to YAML
 	data, err := yaml.Marshal(config)

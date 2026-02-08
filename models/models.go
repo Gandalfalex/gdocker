@@ -9,6 +9,7 @@ import (
 
 type Model struct {
 	KeyBindings     *config.KeyBindings
+	UIConfig        *config.UIConfig
 	Containers      []Container
 	Standalone      []Container
 	Projects        []ComposeGroup
