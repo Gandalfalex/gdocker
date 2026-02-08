@@ -55,14 +55,14 @@ func RenderView(m *models.Model) string {
 		Width(leftWidth).
 		Height(m.Height - 4). // -4 for header and status
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#007acc")).
+		BorderForeground(lipgloss.Color(ColorPrimary)).
 		Render(left)
 
 	rightPanel := lipgloss.NewStyle().
 		Width(rightWidth).
 		Height(m.Height - 4). // -4 for header and status
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3e3e3e")).
+		BorderForeground(lipgloss.Color(ColorBorder)).
 		Render(right)
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
@@ -110,7 +110,7 @@ func RenderView(m *models.Model) string {
 	}
 
 	statusBar := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#858585")).
+		Foreground(lipgloss.Color(ColorMuted)).
 		Render(statusText)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panels, statusBar)
@@ -139,7 +139,7 @@ func RenderList(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render(titleText)
 	s.WriteString(title + "\n\n")
 
@@ -171,9 +171,9 @@ func RenderList(m *models.Model, width, height int) string {
 		}
 
 		if item.IsProject {
-			icon := "▶ "
+			icon := IconCollapsed + " "
 			if item.Project.Expanded {
-				icon = "▼ "
+				icon = IconExpanded + " "
 			}
 
 			// Count running containers
@@ -185,45 +185,27 @@ func RenderList(m *models.Model, width, height int) string {
 			}
 
 			projectStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#569cd6")).
+				Foreground(lipgloss.Color(ColorImage)).
 				Bold(true)
 
 			line := fmt.Sprintf("%s%s%s ", cursor, icon, projectStyle.Render(item.Project.Name))
 
 			// Add count indicator
 			countStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#858585"))
+				Foreground(lipgloss.Color(ColorMuted))
 			line += countStyle.Render(fmt.Sprintf("(%d/%d)", running, len(item.Project.Containers)))
 
 			if i == m.Cursor {
 				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("#094771")).
+					Background(lipgloss.Color(ColorHighlight)).
 					Render(line)
 			}
 			s.WriteString(line + "\n")
 
 		} else if item.IsContainer {
 			// Determine status icon and color
-			var statusIcon string
-			var statusColor lipgloss.Color
-
-			switch item.Container.State {
-			case "running":
-				statusIcon = "●"
-				statusColor = lipgloss.Color("#4ec9b0") // Green
-			case "paused":
-				statusIcon = "◐"
-				statusColor = lipgloss.Color("#dcdcaa") // Yellow
-			case "restarting":
-				statusIcon = "↻"
-				statusColor = lipgloss.Color("#4ec9b0") // Green
-			case "exited":
-				statusIcon = "■"
-				statusColor = lipgloss.Color("#858585") // Gray
-			default:
-				statusIcon = "●"
-				statusColor = lipgloss.Color("#ce9178") // Orange
-			}
+			statusIcon := GetContainerStatusIcon(item.Container.State)
+			statusColor := lipgloss.Color(GetContainerStatusColor(item.Container.State))
 
 			statusStyled := lipgloss.NewStyle().
 				Foreground(statusColor).
@@ -238,28 +220,28 @@ func RenderList(m *models.Model, width, height int) string {
 			// Container name style
 			nameStyle := lipgloss.NewStyle()
 			if item.Container.State != "running" {
-				nameStyle = nameStyle.Foreground(lipgloss.Color("#858585"))
+				nameStyle = nameStyle.Foreground(lipgloss.Color(ColorMuted))
 			}
 
 			line := fmt.Sprintf("%s%s%s %s", cursor, indent, statusStyled, nameStyle.Render(item.Container.Name))
 
 			if i == m.Cursor {
 				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("#094771")).
+					Background(lipgloss.Color(ColorHighlight)).
 					Render(line)
 			}
 			s.WriteString(line + "\n")
 
 		} else if item.IsVolume {
 			volumeIcon := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#dcdcaa")).
-				Render("◉")
+				Foreground(lipgloss.Color(ColorVolume)).
+				Render(IconVolume)
 
 			line := fmt.Sprintf("%s%s %s", cursor, volumeIcon, item.Volume.Name)
 
 			if i == m.Cursor {
 				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("#094771")).
+					Background(lipgloss.Color(ColorHighlight)).
 					Bold(true).
 					Render(line)
 			}
@@ -267,8 +249,8 @@ func RenderList(m *models.Model, width, height int) string {
 
 		} else if item.IsImage {
 			imageIcon := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#569cd6")).
-				Render("▢")
+				Foreground(lipgloss.Color(ColorImage)).
+				Render(IconImage)
 
 			// Get the first repo tag or show <none>
 			name := "<none>"
@@ -280,7 +262,7 @@ func RenderList(m *models.Model, width, height int) string {
 
 			if i == m.Cursor {
 				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("#094771")).
+					Background(lipgloss.Color(ColorHighlight)).
 					Bold(true).
 					Render(line)
 			}
@@ -288,14 +270,14 @@ func RenderList(m *models.Model, width, height int) string {
 
 		} else if item.IsNetwork {
 			networkIcon := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#c586c0")).
-				Render("⬡")
+				Foreground(lipgloss.Color(ColorNetwork)).
+				Render(IconNetwork)
 
 			line := fmt.Sprintf("%s%s %s", cursor, networkIcon, item.Network.Name)
 
 			if i == m.Cursor {
 				line = lipgloss.NewStyle().
-					Background(lipgloss.Color("#094771")).
+					Background(lipgloss.Color(ColorHighlight)).
 					Bold(true).
 					Render(line)
 			}
@@ -311,7 +293,7 @@ func RenderDetails(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Details")
 	s.WriteString(title + "\n\n")
 
@@ -340,10 +322,10 @@ func RenderDetails(m *models.Model, width, height int) string {
 
 		s.WriteString(renderLabel("Name") + c.Name + "\n")
 
-		statusColor := lipgloss.Color("#ce9178")
+		statusColor := lipgloss.Color(ColorLink)
 		statusText := "Stopped"
 		if c.State == "running" {
-			statusColor = lipgloss.Color("#4ec9b0")
+			statusColor = lipgloss.Color(ColorSuccess)
 			statusText = "Running"
 		}
 		s.WriteString(renderLabel("Status") + lipgloss.NewStyle().Foreground(statusColor).Render(statusText) + "\n")
@@ -426,7 +408,7 @@ func RenderPorts(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Port Mappings")
 	s.WriteString(title + "\n\n")
 
@@ -457,7 +439,7 @@ func RenderPorts(m *models.Model, width, height int) string {
 		line := cursor + portStr
 		if i == m.SelectedPort {
 			line = lipgloss.NewStyle().
-				Background(lipgloss.Color("#094771")).
+				Background(lipgloss.Color(ColorHighlight)).
 				Bold(true).
 				Render(line)
 		}
@@ -466,11 +448,11 @@ func RenderPorts(m *models.Model, width, height int) string {
 		// Show URL hint for HTTP ports
 		if i == m.SelectedPort && port.PublicPort > 0 && (port.PrivatePort == 80 || port.PrivatePort == 8080 || port.PrivatePort == 3000 || port.PrivatePort == 5000) {
 			url := fmt.Sprintf("http://localhost:%d", port.PublicPort)
-			s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render("→ "+url) + "\n")
+			s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("→ "+url) + "\n")
 		}
 	}
 
-	s.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render("Press 'o' or 'enter' to open in browser"))
+	s.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("Press 'o' or 'enter' to open in browser"))
 
 	return s.String()
 }
@@ -480,7 +462,7 @@ func RenderEnv(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Environment Variables")
 	s.WriteString(title + "\n\n")
 
@@ -499,13 +481,13 @@ func RenderEnv(m *models.Model, width, height int) string {
 	for i, envVar := range c.Env {
 		if i >= maxVisible {
 			remaining := len(c.Env) - maxVisible
-			s.WriteString(fmt.Sprintf("\n... %d more", remaining))
+			fmt.Fprintf(&s, "\n... %d more", remaining)
 			break
 		}
 
 		parts := strings.SplitN(envVar, "=", 2)
 		if len(parts) == 2 {
-			key := lipgloss.NewStyle().Foreground(lipgloss.Color("#4ec9b0")).Render(parts[0])
+			key := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Render(parts[0])
 			value := parts[1]
 			// Truncate long values
 			if len(value) > width-len(parts[0])-10 {
@@ -525,7 +507,7 @@ func RenderLogs(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Logs")
 	s.WriteString(title + "\n\n")
 
@@ -578,7 +560,7 @@ func RenderLogs(m *models.Model, width, height int) string {
 		if i == scrollPos {
 			// Highlight current line
 			line = lipgloss.NewStyle().
-				Background(lipgloss.Color("#094771")).
+				Background(lipgloss.Color(ColorHighlight)).
 				Render(line)
 		}
 		s.WriteString(line + "\n")
@@ -587,14 +569,14 @@ func RenderLogs(m *models.Model, width, height int) string {
 	// Show position indicator
 	s.WriteString("\n")
 	indicator := fmt.Sprintf("Line %d/%d (%d-%d)", scrollPos+1, len(m.Logs), start+1, end)
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render(indicator))
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(indicator))
 
 	return s.String()
 }
 
 func renderLabel(label string) string {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#858585")).
+		Foreground(lipgloss.Color(ColorMuted)).
 		Bold(true).
 		Render(label + ": ")
 }
@@ -641,8 +623,8 @@ func highlightSearchTerm(line, query string) string {
 		// Add highlighted match
 		match := line[idx : idx+len(query)]
 		highlighted := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#000000")).
-			Background(lipgloss.Color("#ffff00")).
+			Foreground(lipgloss.Color(ColorSearchHighlightFG)).
+			Background(lipgloss.Color(ColorSearchHighlightBG)).
 			Render(match)
 		result.WriteString(highlighted)
 
@@ -664,7 +646,7 @@ func RenderStats(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Container Stats")
 	s.WriteString(title + "\n\n")
 
@@ -682,16 +664,16 @@ func RenderStats(m *models.Model, width, height int) string {
 
 	// Network I/O
 	s.WriteString(renderLabel("Network I/O") + m.Stats.NetIO + "\n")
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render("  (Received / Transmitted)") + "\n\n")
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  (Received / Transmitted)") + "\n\n")
 
 	// Block I/O
 	s.WriteString(renderLabel("Block I/O") + m.Stats.BlockIO + "\n")
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render("  (Read / Write)") + "\n\n")
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("  (Read / Write)") + "\n\n")
 
 	// PIDs
 	s.WriteString(renderLabel("PIDs") + m.Stats.PIDs + "\n")
 
-	s.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render("Press 't' to refresh stats"))
+	s.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render("Press 't' to refresh stats"))
 
 	return s.String()
 }
@@ -714,7 +696,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#0e639c")).
+		Foreground(lipgloss.Color(ColorTitle)).
 		Render("Container Inspect (JSON)")
 	s.WriteString(title + "\n\n")
 
@@ -758,7 +740,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 		if i == scrollPos {
 			// Highlight current line
 			line = lipgloss.NewStyle().
-				Background(lipgloss.Color("#094771")).
+				Background(lipgloss.Color(ColorHighlight)).
 				Render(line)
 		}
 		s.WriteString(line + "\n")
@@ -767,7 +749,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 	// Show position indicator
 	s.WriteString("\n")
 	indicator := fmt.Sprintf("Line %d/%d (%d-%d)", scrollPos+1, len(lines), start+1, end)
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render(indicator))
+	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(indicator))
 
 	return s.String()
 }
@@ -787,25 +769,25 @@ func RenderHeader(m *models.Model, width int) string {
 
 	// Create header sections
 	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#569cd6")).
+		Foreground(lipgloss.Color(ColorInfo)).
 		Bold(true)
 
 	title := titleStyle.Render("🐳 GDocker")
 
 	// Stats
-	runningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#4ec9b0"))
-	stoppedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#858585"))
+	runningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess))
+	stoppedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))
 
 	stats := fmt.Sprintf("Containers: %s %s %s",
 		runningStyle.Render(fmt.Sprintf("●%d", running)),
 		stoppedStyle.Render(fmt.Sprintf("■%d", stopped)),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#858585")).Render(fmt.Sprintf("(%d total)", total)),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(fmt.Sprintf("(%d total)", total)),
 	)
 
 	// Resource counts
 	resources := fmt.Sprintf("Volumes: %d  Images: %d  Networks: %d",
 		len(m.Volumes), len(m.Images), len(m.Networks))
-	resourceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#858585"))
+	resourceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))
 
 	// Combine all parts
 	left := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", stats)
@@ -818,8 +800,8 @@ func RenderHeader(m *models.Model, width int) string {
 	header := lipgloss.JoinHorizontal(lipgloss.Left, " ", left, spacer, right, " ")
 
 	return lipgloss.NewStyle().
-		Background(lipgloss.Color("#1e1e1e")).
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Background(lipgloss.Color(ColorBackground)).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Width(width).
 		Render(header)
 }
@@ -829,18 +811,18 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#569cd6")).
+		Foreground(lipgloss.Color(ColorInfo)).
 		Render("GDocker - Help")
 
 	s.WriteString(title + "\n\n")
 
 	// Navigation section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("Navigation") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  1-4          Switch between containers, volumes, images, networks\n" +
 				"  j/k, ↓/↑     Move cursor up/down\n" +
@@ -852,11 +834,11 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	// Container actions section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("Container Actions") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  :s           Start container\n" +
 				"  :S           Stop container\n" +
@@ -874,11 +856,11 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	// Logs section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("Logs View") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  j/k          Scroll logs up/down\n" +
 				"  g/G          Jump to top/bottom\n" +
@@ -891,11 +873,11 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	// Ports section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("Ports View") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  j/k          Select port\n" +
 				"  o/enter      Open selected port in browser\n",
@@ -905,11 +887,11 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	// Commands section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("Commands") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  :q           Quit application\n" +
 				"  :help        Show this help\n" +
@@ -922,11 +904,11 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	// General section
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4ec9b0")).
+		Foreground(lipgloss.Color(ColorSuccess)).
 		Bold(true).
 		Render("General") + "\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#d4d4d4")).
+		Foreground(lipgloss.Color(ColorForeground)).
 		Render(
 			"  esc          Go back/close view\n" +
 				"  ctrl+c       Force quit\n" +
@@ -935,7 +917,7 @@ func RenderHelp(m *models.Model, width, height int) string {
 
 	s.WriteString("\n")
 	s.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#858585")).
+		Foreground(lipgloss.Color(ColorMuted)).
 		Italic(true).
 		Render("Press esc to close this help"))
 
@@ -946,7 +928,7 @@ func RenderHelp(m *models.Model, width, height int) string {
 		Width(width-4).
 		Height(height-2).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#569cd6")).
+		BorderForeground(lipgloss.Color(ColorInfo)).
 		Padding(1, 2).
 		Render(helpContent)
 

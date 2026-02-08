@@ -2,7 +2,6 @@ package models
 
 import (
 	"fmt"
-	"gdocker/config"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -165,264 +164,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Build key handler map
+		keyHandlers := buildKeyHandlerMap(&m)
+
+		// Look up and execute handler for this key
 		key := msg.String()
-		kb := m.KeyBindings
-
-		// Handle general keys
-		if config.Contains(kb.General.ForceQuit, key) {
-			QuitFunc(&m)
-			return m, tea.Quit
-		}
-
-		// Handle back/escape
-		if config.Contains(kb.Views.Back, key) {
-			if m.HelpMode {
-				m.HelpMode = false
-				m.StatusMessage = ""
-			} else if m.ViewMode == ViewLogs || m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
-				m.ViewMode = ViewDetails
-				m.Logs = nil
-				m.SelectedPort = 0
-				m.SearchQuery = ""
-				m.SearchResults = nil
-				m.SearchResultIdx = 0
-				m.Stats = nil
-				m.InspectData = ""
-				m.StatusMessage = ""
-			}
-			return m, nil
-		}
-
-		// Handle navigation - down
-		if config.Contains(kb.Navigation.Down, key) {
-			switch m.ViewMode {
-			case ViewLogs, ViewInspect:
-				maxLines := len(m.Logs)
-				if m.ViewMode == ViewInspect {
-					maxLines = len(strings.Split(m.InspectData, "\n"))
-				}
-				if m.LogScroll < maxLines-1 {
-					m.LogScroll++
-				}
-			case ViewPorts:
-				if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-					if m.SelectedPort < len(m.Items[m.Cursor].Container.Ports)-1 {
-						m.SelectedPort++
-					}
-				}
-			default:
-				if m.Cursor < len(m.Items)-1 {
-					m.Cursor++
-				}
-			}
-			return m, nil
-		}
-
-		// Handle navigation - up
-		if config.Contains(kb.Navigation.Up, key) {
-			switch m.ViewMode {
-			case ViewLogs, ViewInspect:
-				if m.LogScroll > 0 {
-					m.LogScroll--
-				}
-			case ViewPorts:
-				if m.SelectedPort > 0 {
-					m.SelectedPort--
-				}
-			default:
-				if m.Cursor > 0 {
-					m.Cursor--
-				}
-			}
-			return m, nil
-		}
-
-		// Handle navigation - top
-		if config.Contains(kb.Navigation.Top, key) {
-			if m.ViewMode == ViewLogs || m.ViewMode == ViewInspect {
-				m.LogScroll = 0
-			} else {
-				m.Cursor = 0
-			}
-			return m, nil
-		}
-
-		// Handle navigation - bottom
-		if config.Contains(kb.Navigation.Bottom, key) {
-			if m.ViewMode == ViewLogs || m.ViewMode == ViewInspect {
-				maxLines := len(m.Logs) - 1
-				if m.ViewMode == ViewInspect {
-					maxLines = len(strings.Split(m.InspectData, "\n")) - 1
-				}
-				m.LogScroll = maxLines
-			} else {
-				m.Cursor = len(m.Items) - 1
-			}
-			return m, nil
-		}
-
-		// Handle toggle expand
-		if config.Contains(kb.Navigation.ToggleExpand, key) {
-			// Toggle project expansion
-			if m.ViewMode == ViewDetails && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsProject {
-				idx := m.Items[m.Cursor].Index
-				m.Projects[idx].Expanded = !m.Projects[idx].Expanded
-				RebuildItemsFunc(&m)
-			}
-			// In ports view, "enter" opens the port
-			if key == "enter" && m.ViewMode == ViewPorts && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				return m, OpenPortInBrowserFunc(&m)
-			}
-			return m, nil
-		}
-
-		// Handle container actions
-		if config.Contains(kb.Container.Restart, key) {
-			return m, RestartContainerFunc(&m)
-		}
-
-		if config.Contains(kb.Container.Delete, key) {
-			switch m.NavMode {
-			case NavContainers:
-				return m, DeleteContainerFunc(&m)
-			case NavVolumes:
-				return m, DeleteVolumeFunc(&m)
-			case NavImages:
-				return m, DeleteImageFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.Logs, key) {
-			return m, LoadLogsFunc(&m)
-		}
-
-		if config.Contains(kb.Container.Exec, key) {
-			if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				return m, ExecShellFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.Ports, key) {
-			if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				m.ViewMode = ViewPorts
-				m.SelectedPort = 0
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.Env, key) {
-			if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				m.ViewMode = ViewEnv
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.Stats, key) || config.Contains(kb.Container.RefreshStats, key) {
-			if m.ViewMode == ViewStats {
-				return m, LoadStatsFunc(&m)
-			} else if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				return m, LoadStatsFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.Inspect, key) {
-			if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				return m, LoadInspectFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Container.OpenPort, key) {
-			if m.ViewMode == ViewPorts && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-				return m, OpenPortInBrowserFunc(&m)
-			}
-			return m, nil
-		}
-
-		// Handle command mode
-		if config.Contains(kb.Commands.Enter, key) {
-			m.CommandMode = true
-			m.CommandInput = ""
-			m.StatusMessage = ""
-			return m, nil
-		}
-
-		// Handle search
-		if config.Contains(kb.Logs.Search, key) {
-			if m.ViewMode == ViewLogs {
-				m.SearchMode = true
-				m.SearchQuery = ""
-				m.StatusMessage = ""
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Logs.NextResult, key) {
-			if m.ViewMode == ViewLogs && len(m.SearchResults) > 0 {
-				m.SearchResultIdx++
-				if m.SearchResultIdx >= len(m.SearchResults) {
-					m.SearchResultIdx = 0
-				}
-				m.LogScroll = m.SearchResults[m.SearchResultIdx]
-				m.StatusMessage = formatSearchStatus(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Logs.PrevResult, key) {
-			if m.ViewMode == ViewLogs && len(m.SearchResults) > 0 {
-				m.SearchResultIdx--
-				if m.SearchResultIdx < 0 {
-					m.SearchResultIdx = len(m.SearchResults) - 1
-				}
-				m.LogScroll = m.SearchResults[m.SearchResultIdx]
-				m.StatusMessage = formatSearchStatus(&m)
-			}
-			return m, nil
-		}
-
-		// Handle view switching
-		if config.Contains(kb.Navigation.SwitchContainer, key) {
-			if m.NavMode != NavContainers {
-				m.NavMode = NavContainers
-				m.ViewMode = ViewDetails
-				m.Cursor = 0
-				RebuildItemsFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Navigation.SwitchVolume, key) {
-			if m.NavMode != NavVolumes {
-				m.NavMode = NavVolumes
-				m.ViewMode = ViewDetails
-				m.Cursor = 0
-				RebuildVolumeItemsFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Navigation.SwitchImage, key) {
-			if m.NavMode != NavImages {
-				m.NavMode = NavImages
-				m.ViewMode = ViewDetails
-				m.Cursor = 0
-				RebuildImageItemsFunc(&m)
-			}
-			return m, nil
-		}
-
-		if config.Contains(kb.Navigation.SwitchNetwork, key) {
-			if m.NavMode != NavNetworks {
-				m.NavMode = NavNetworks
-				m.ViewMode = ViewDetails
-				m.Cursor = 0
-				RebuildNetworkItemsFunc(&m)
-			}
-			return m, nil
+		if handler, exists := keyHandlers[key]; exists {
+			return handler(&m)
 		}
 	}
 
@@ -471,31 +219,15 @@ func executeCommand(m *Model) tea.Cmd {
 	cmd := strings.TrimSpace(m.CommandInput)
 	m.CommandInput = ""
 
-	switch cmd {
-	case "q", "quit":
-		// Quit application
-		QuitFunc(m)
-		return tea.Quit
-	case "s", "start":
-		// Start container
-		m.StatusMessage = "Starting container..."
-		return StartContainerFunc(m)
-	case "S", "stop":
-		// Stop container
-		m.StatusMessage = "Stopping container..."
-		return StopContainerFunc(m)
-	case "noh":
-		// Clear search highlighting
-		m.SearchQuery = ""
-		m.SearchResults = nil
-		m.SearchResultIdx = 0
-		m.StatusMessage = "Search cleared"
-	case "help", "h":
-		// Show help window
-		m.HelpMode = true
-		m.StatusMessage = ""
-	default:
-		m.StatusMessage = fmt.Sprintf("Unknown command: %s", cmd)
+	// Build command handler map
+	commandHandlers := buildCommandHandlerMap()
+
+	// Look up and execute command handler
+	if handler, exists := commandHandlers[cmd]; exists {
+		return handler(m)
 	}
+
+	// Unknown command
+	m.StatusMessage = fmt.Sprintf("Unknown command: %s", cmd)
 	return nil
 }
