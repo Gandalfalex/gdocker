@@ -102,6 +102,7 @@ Press `:` to enter command mode, then type:
 | `g` / `G` | Jump to top/bottom |
 | `?` | Search in logs |
 | `n` / `N` | Next/previous search result |
+| `f` | Toggle log follow mode |
 | `:noh` | Clear search highlighting |
 | `esc` | Back to details |
 
@@ -134,6 +135,11 @@ GDocker automatically detects and groups containers by their compose project:
 ```
 
 Press `space` or `enter` to expand/collapse projects.
+
+### Auto Refresh
+
+The containers list auto-refreshes while you are in the containers navigation view.
+Default interval is 10 seconds and can be changed with `docker.auto_refresh_seconds`.
 
 ### Smart Log Search
 
@@ -219,6 +225,7 @@ keybindings:
     search: ["?"]                # Start search
     next_result: ["n"]           # Next search result
     prev_result: ["N"]           # Previous search result
+    follow: ["f"]                # Toggle log follow mode
 
   commands:
     enter: [":"]                 # Enter command mode
@@ -236,6 +243,11 @@ ui:
   max_project_preview_items: 8   # Project details: max containers shown
   max_container_port_preview: 4  # Container details: max ports shown
   max_image_tag_preview: 6       # Image details: max tags shown
+
+docker:
+  host: ""                       # Empty = use DOCKER_HOST/default socket
+                                 # Example remote: "ssh://user@your-server"
+  auto_refresh_seconds: 10       # Auto-refresh containers list interval
 ```
 
 ### Multiple Key Bindings
@@ -255,6 +267,17 @@ If no config file is found at `~/.config/gdocker/config.yaml`, GDocker uses defa
 
 - **Linux/macOS**: `~/.config/gdocker/config.yaml`
 - **Example file**: `config.yaml.example` in the repository
+
+### Remote Docker over SSH
+
+To connect GDocker to a remote Docker daemon over SSH, set:
+
+```yaml
+docker:
+  host: "ssh://user@your-server"
+```
+
+Then start GDocker normally. It will connect to the remote host instead of the local Docker socket.
 
 ## 🏗️ Project Structure
 

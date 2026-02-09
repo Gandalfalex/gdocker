@@ -32,6 +32,7 @@ keybindings:
     search: ["?"]                # Start search
     next_result: ["n"]           # Next search result
     prev_result: ["N"]           # Previous search result
+    follow: ["f"]                # Toggle log following in logs view
 
   commands:
     enter: [":"]                 # Enter command mode
@@ -46,6 +47,11 @@ ui:
   max_project_preview_items: 8   # Project details: max containers shown
   max_container_port_preview: 4  # Container details: max ports shown
   max_image_tag_preview: 6       # Image details: max tags shown
+
+docker:
+  host: ""                       # Empty = use DOCKER_HOST/default socket
+                                 # Example remote: "ssh://user@your-server"
+  auto_refresh_seconds: 10       # Auto-refresh containers list interval
 
 # Command mode commands (cannot be customized via keybindings):
 # :q, :quit     - Quit application

@@ -3,14 +3,16 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // AppConfig is the root configuration structure loaded from config.yaml.
 type AppConfig struct {
-	KeyBindings KeyBindings `yaml:"keybindings"`
-	UI          UIConfig    `yaml:"ui"`
+	KeyBindings KeyBindings  `yaml:"keybindings"`
+	UI          UIConfig     `yaml:"ui"`
+	Docker      DockerConfig `yaml:"docker"`
 }
 
 // KeyBindings holds all configurable key bindings
@@ -56,6 +58,7 @@ type LogKeys struct {
 	Search     []string `yaml:"search"`
 	NextResult []string `yaml:"next_result"`
 	PrevResult []string `yaml:"prev_result"`
+	Follow     []string `yaml:"follow"`
 }
 
 type CommandKeys struct {
@@ -74,6 +77,17 @@ type UIConfig struct {
 	MaxProjectPreviewItems  int  `yaml:"max_project_preview_items"`
 	MaxContainerPortPreview int  `yaml:"max_container_port_preview"`
 	MaxImageTagPreview      int  `yaml:"max_image_tag_preview"`
+}
+
+// DockerConfig holds Docker connection preferences.
+type DockerConfig struct {
+	// Host can be a Docker endpoint such as:
+	// unix:///var/run/docker.sock, tcp://host:2376, or ssh://user@host
+	// Empty value keeps Docker SDK environment/default behavior.
+	Host string `yaml:"host"`
+	// AutoRefreshSeconds controls container list auto-refresh interval.
+	// Must be >= 1. Default is 10 seconds.
+	AutoRefreshSeconds int `yaml:"auto_refresh_seconds"`
 }
 
 // Default returns the default key bindings
@@ -109,6 +123,7 @@ func Default() *KeyBindings {
 			Search:     []string{"?"},
 			NextResult: []string{"n"},
 			PrevResult: []string{"N"},
+			Follow:     []string{"f"},
 		},
 		Commands: CommandKeys{
 			Enter: []string{":"},
@@ -136,6 +151,15 @@ func DefaultAppConfig() *AppConfig {
 	return &AppConfig{
 		KeyBindings: *Default(),
 		UI:          *DefaultUI(),
+		Docker:      *DefaultDocker(),
+	}
+}
+
+// DefaultDocker returns default Docker connection settings.
+func DefaultDocker() *DockerConfig {
+	return &DockerConfig{
+		Host:               "",
+		AutoRefreshSeconds: 10,
 	}
 }
 
@@ -149,6 +173,10 @@ func (c *AppConfig) sanitize() {
 	}
 	if c.UI.MaxImageTagPreview < 1 {
 		c.UI.MaxImageTagPreview = 1
+	}
+	c.Docker.Host = strings.TrimSpace(c.Docker.Host)
+	if c.Docker.AutoRefreshSeconds < 1 {
+		c.Docker.AutoRefreshSeconds = 10
 	}
 }
 

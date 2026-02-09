@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -22,6 +23,7 @@ var (
 	DeleteVolumeFunc        func(*Model) tea.Cmd
 	DeleteImageFunc         func(*Model) tea.Cmd
 	LoadLogsFunc            func(*Model) tea.Cmd
+	FollowLogsFunc          func(*Model) tea.Cmd
 	LoadInspectFunc         func(*Model) tea.Cmd
 	LoadStatsFunc           func(*Model) tea.Cmd
 	ExecShellFunc           func(*Model) tea.Cmd
@@ -31,11 +33,24 @@ var (
 )
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return autoRefreshTickCmd(m.AutoRefreshSecs)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case AutoRefreshTickMsg:
+		next := autoRefreshTickCmd(m.AutoRefreshSecs)
+		if m.NavMode == NavContainers {
+			return m, tea.Batch(next, RefreshContainersFunc(&m))
+		}
+		return m, next
+
+	case LogFollowTickMsg:
+		if m.ViewMode == ViewLogs && m.FollowingLogs {
+			return m, tea.Batch(logFollowTickCmd(), FollowLogsFunc(&m))
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -67,7 +82,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LogsLoadedMsg:
 		m.Logs = msg.Lines
 		m.LogScroll = len(msg.Lines) - 1 // Scroll to bottom
+		m.LogSince = msg.Since
 		m.ViewMode = ViewLogs
+		m.FollowingLogs = msg.Follow
+		if m.FollowingLogs {
+			return m, logFollowTickCmd()
+		}
+		return m, nil
+
+	case LogsFollowedMsg:
+		if len(msg.Lines) > 0 {
+			for _, line := range msg.Lines {
+				// Skip immediate duplicates caused by coarse timestamp "since" filters.
+				if len(m.Logs) == 0 || m.Logs[len(m.Logs)-1] != line {
+					m.Logs = append(m.Logs, line)
+				}
+			}
+			m.LogScroll = len(m.Logs) - 1
+			if m.SearchQuery != "" {
+				performSearch(&m)
+				if len(m.SearchResults) > 0 {
+					m.LogScroll = len(m.Logs) - 1
+				}
+			}
+		}
+		if !msg.Since.IsZero() {
+			m.LogSince = msg.Since
+		}
 		return m, nil
 
 	case StatsLoadedMsg:
@@ -230,4 +271,19 @@ func executeCommand(m *Model) tea.Cmd {
 	// Unknown command
 	m.StatusMessage = fmt.Sprintf("Unknown command: %s", cmd)
 	return nil
+}
+
+func autoRefreshTickCmd(intervalSec int) tea.Cmd {
+	if intervalSec < 1 {
+		intervalSec = 10
+	}
+	return tea.Tick(time.Duration(intervalSec)*time.Second, func(time.Time) tea.Msg {
+		return AutoRefreshTickMsg{}
+	})
+}
+
+func logFollowTickCmd() tea.Cmd {
+	return tea.Tick(1*time.Second, func(time.Time) tea.Msg {
+		return LogFollowTickMsg{}
+	})
 }

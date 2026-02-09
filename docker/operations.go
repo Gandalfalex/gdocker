@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ func init() {
 	models.DeleteVolumeFunc = DeleteVolume
 	models.DeleteImageFunc = DeleteImage
 	models.LoadLogsFunc = LoadLogs
+	models.FollowLogsFunc = FollowLogs
 	models.LoadInspectFunc = LoadInspect
 	models.ExecShellFunc = ExecShell
 	models.OpenPortInBrowserFunc = OpenPortInBrowser
@@ -203,8 +205,97 @@ func LoadLogs(m *models.Model) tea.Cmd {
 			}
 		}
 
-		return models.LogsLoadedMsg{Lines: lines}
+		since := time.Now()
+		if len(lines) > 0 {
+			if ts, ok := parseLogTimestamp(lines[len(lines)-1]); ok {
+				since = ts
+			}
+		}
+
+		return models.LogsLoadedMsg{
+			Lines:  lines,
+			Follow: true,
+			Since:  since,
+		}
 	}
+}
+
+func FollowLogs(m *models.Model) tea.Cmd {
+	if m.ViewMode != models.ViewLogs || !m.FollowingLogs {
+		return nil
+	}
+	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
+		return nil
+	}
+
+	containerID := m.Items[m.Cursor].Container.ID
+	since := m.LogSince
+	if since.IsZero() {
+		since = time.Now()
+	}
+
+	return func() tea.Msg {
+		reader, err := m.DockerClient.ContainerLogs(context.Background(), containerID, client.ContainerLogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Tail:       "0",
+			Timestamps: true,
+			Since:      strconv.FormatInt(since.Unix(), 10),
+		})
+		if err != nil {
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to follow logs: %v", err), Success: false}
+		}
+		defer reader.Close()
+
+		lines, newest := decodeDockerLogStream(reader, time.Now())
+		return models.LogsFollowedMsg{Lines: lines, Since: newest}
+	}
+}
+
+func decodeDockerLogStream(reader io.Reader, fallbackSince time.Time) ([]string, time.Time) {
+	var lines []string
+	buf := make([]byte, 8) // Docker log header is 8 bytes
+	newest := fallbackSince
+
+	for {
+		_, err := io.ReadFull(reader, buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+
+		size := uint32(buf[4])<<24 | uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7])
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+
+		line := strings.TrimSpace(string(payload))
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+		if ts, ok := parseLogTimestamp(line); ok && ts.After(newest) {
+			newest = ts
+		}
+	}
+
+	return lines, newest
+}
+
+func parseLogTimestamp(line string) (time.Time, bool) {
+	parts := strings.SplitN(line, " ", 2)
+	if len(parts) < 1 {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts, true
 }
 
 func ExecShell(m *models.Model) tea.Cmd {
@@ -312,18 +403,27 @@ func InitialModel() (models.Model, error) {
 		appConfig = config.DefaultAppConfig()
 	}
 
-	// Connect to Docker
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	// Connect to Docker. Configured host overrides DOCKER_HOST.
+	clientOpts := []client.Opt{
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	}
+	if appConfig.Docker.Host != "" {
+		clientOpts = append(clientOpts, client.WithHost(appConfig.Docker.Host))
+	}
+
+	cli, err := client.NewClientWithOpts(clientOpts...)
 	if err != nil {
 		return models.Model{}, err
 	}
 
 	m := models.Model{
-		KeyBindings:  &appConfig.KeyBindings,
-		UIConfig:     &appConfig.UI,
-		DockerClient: cli,
-		ViewMode:     models.ViewDetails,
-		NavMode:      models.NavContainers,
+		KeyBindings:     &appConfig.KeyBindings,
+		UIConfig:        &appConfig.UI,
+		DockerClient:    cli,
+		ViewMode:        models.ViewDetails,
+		NavMode:         models.NavContainers,
+		AutoRefreshSecs: appConfig.Docker.AutoRefreshSeconds,
 	}
 
 	// Load initial data
@@ -363,25 +463,24 @@ func LoadStats(m *models.Model) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Get stats with stream=false to get a single snapshot
-		stats, err := m.DockerClient.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: false})
+		// Take a first snapshot.
+		v, err := getContainerStatsSnapshot(ctx, m.DockerClient, containerID)
 		if err != nil {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to load stats: %v", err), Success: false}
 		}
-		defer stats.Body.Close()
 
-		// Decode the stats
-		var v container.StatsResponse
-		if err := json.NewDecoder(stats.Body).Decode(&v); err != nil {
-			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to decode stats: %v", err), Success: false}
-		}
+		// Calculate CPU from Docker's pre-cpu delta first.
+		cpuPercent := calculateCPUPercent(v.CPUStats, v.PreCPUStats)
 
-		// Calculate CPU percentage
-		cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage) - float64(v.PreCPUStats.CPUUsage.TotalUsage)
-		systemDelta := float64(v.CPUStats.SystemUsage) - float64(v.PreCPUStats.SystemUsage)
-		cpuPercent := 0.0
-		if systemDelta > 0.0 && cpuDelta > 0.0 {
-			cpuPercent = (cpuDelta / systemDelta) * float64(len(v.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+		// Some daemons/cgroup setups return empty/zero pre-cpu on first read.
+		// Fallback: take a second snapshot and compute deltas between snapshots.
+		if cpuPercent == 0.0 {
+			time.Sleep(250 * time.Millisecond)
+			v2, err := getContainerStatsSnapshot(ctx, m.DockerClient, containerID)
+			if err == nil {
+				cpuPercent = calculateCPUPercent(v2.CPUStats, v.CPUStats)
+				v = v2 // Keep the freshest values for memory/net/block/pids.
+			}
 		}
 
 		// Calculate memory usage
@@ -431,6 +530,38 @@ func LoadStats(m *models.Model) tea.Cmd {
 			},
 		}
 	}
+}
+
+func getContainerStatsSnapshot(ctx context.Context, cli *client.Client, containerID string) (container.StatsResponse, error) {
+	stats, err := cli.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: false})
+	if err != nil {
+		return container.StatsResponse{}, err
+	}
+	defer stats.Body.Close()
+
+	var v container.StatsResponse
+	if err := json.NewDecoder(stats.Body).Decode(&v); err != nil {
+		return container.StatsResponse{}, err
+	}
+	return v, nil
+}
+
+func calculateCPUPercent(current, previous container.CPUStats) float64 {
+	cpuDelta := float64(current.CPUUsage.TotalUsage) - float64(previous.CPUUsage.TotalUsage)
+	systemDelta := float64(current.SystemUsage) - float64(previous.SystemUsage)
+	if systemDelta <= 0.0 || cpuDelta <= 0.0 {
+		return 0.0
+	}
+
+	cpuCount := float64(current.OnlineCPUs)
+	if cpuCount == 0.0 {
+		cpuCount = float64(len(current.CPUUsage.PercpuUsage))
+	}
+	if cpuCount == 0.0 {
+		cpuCount = 1.0
+	}
+
+	return (cpuDelta / systemDelta) * cpuCount * 100.0
 }
 
 func formatBytes(bytes uint64) string {

@@ -20,8 +20,10 @@ type Model struct {
 	Height          int
 	NavMode         NavigationMode
 	ViewMode        ViewMode
+	AutoRefreshSecs int
 	Logs            []string
 	LogScroll       int
+	LogSince        time.Time
 	StatusMessage   string
 	DockerClient    *client.Client
 	SearchMode      bool   // Whether we're in search input mode
@@ -153,10 +155,16 @@ type ContainersRefreshedMsg struct {
 type LogsLoadedMsg struct {
 	Lines  []string
 	Follow bool
+	Since  time.Time
 }
 
 type LogLineMsg struct {
 	Line string
+}
+
+type LogsFollowedMsg struct {
+	Lines []string
+	Since time.Time
 }
 
 type ActionResultMsg struct {
@@ -188,3 +196,7 @@ type VolumeFilesMsg struct {
 	Files []string
 	Path  string
 }
+
+type AutoRefreshTickMsg struct{}
+
+type LogFollowTickMsg struct{}

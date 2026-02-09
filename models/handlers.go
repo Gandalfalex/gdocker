@@ -2,6 +2,7 @@ package models
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -87,6 +88,9 @@ func buildKeyHandlerMap(m *Model) map[string]KeyHandler {
 	}
 	for _, key := range kb.Logs.PrevResult {
 		handlers[key] = handlePrevSearchResult
+	}
+	for _, key := range kb.Logs.Follow {
+		handlers[key] = handleToggleLogFollow
 	}
 
 	// View handlers
@@ -328,6 +332,21 @@ func handlePrevSearchResult(m *Model) (Model, tea.Cmd) {
 	return *m, nil
 }
 
+func handleToggleLogFollow(m *Model) (Model, tea.Cmd) {
+	if m.ViewMode != ViewLogs {
+		return *m, nil
+	}
+
+	m.FollowingLogs = !m.FollowingLogs
+	if m.FollowingLogs {
+		m.StatusMessage = "Log follow enabled"
+		return *m, FollowLogsFunc(m)
+	}
+
+	m.StatusMessage = "Log follow paused"
+	return *m, nil
+}
+
 // View handlers
 
 func handleBack(m *Model) (Model, tea.Cmd) {
@@ -337,6 +356,8 @@ func handleBack(m *Model) (Model, tea.Cmd) {
 	} else if m.ViewMode == ViewLogs || m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
 		m.ViewMode = ViewDetails
 		m.Logs = nil
+		m.LogSince = time.Time{}
+		m.FollowingLogs = false
 		m.SelectedPort = 0
 		m.SearchQuery = ""
 		m.SearchResults = nil

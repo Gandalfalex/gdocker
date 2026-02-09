@@ -88,7 +88,11 @@ func RenderView(m *models.Model) string {
 		// Priority 3: Context-specific shortcuts
 		switch m.ViewMode {
 		case models.ViewLogs:
-			statusText = "j/k: scroll • g/G: top/bottom • ?: search • n/N: next/prev • :noh: clear • esc: back • :: cmd"
+			follow := "off"
+			if m.FollowingLogs {
+				follow = "on"
+			}
+			statusText = "j/k: scroll • g/G: top/bottom • ?: search • n/N: next/prev • f: follow(" + follow + ") • :noh: clear • esc: back • :: cmd"
 		case models.ViewPorts:
 			statusText = "j/k: select port • o/enter: open in browser • esc: back • :: cmd"
 		case models.ViewEnv:
@@ -574,7 +578,11 @@ func RenderLogs(m *models.Model, width, height int) string {
 	if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
 		containerName = m.Items[m.Cursor].Container.Name
 	}
-	s.WriteString(renderPaneHeader("Logs", fmt.Sprintf("%s • %d lines", containerName, len(m.Logs))))
+	mode := "paused"
+	if m.FollowingLogs {
+		mode = "following"
+	}
+	s.WriteString(renderPaneHeader("Logs", fmt.Sprintf("%s • %d lines • %s", containerName, len(m.Logs), mode)))
 
 	if len(m.Logs) == 0 {
 		s.WriteString("No logs available")
@@ -982,6 +990,7 @@ func RenderHelp(m *models.Model, width, height int) string {
 		{key: "g/G", desc: "Jump to top/bottom"},
 		{key: "?", desc: "Search in logs"},
 		{key: "n/N", desc: "Next/previous search result"},
+		{key: "f", desc: "Toggle live log follow"},
 		{key: ":noh", desc: "Clear search highlighting"},
 	}))
 	s.WriteString("\n")
