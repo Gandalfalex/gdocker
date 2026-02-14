@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"gdocker/config"
 	"gdocker/models"
+	"gdocker/ui"
+	"gdocker/ui/logviewer"
 	"io"
 	"os/exec"
 	"runtime"
@@ -163,12 +165,16 @@ func LoadLogs(m *models.Model) tea.Cmd {
 	}
 
 	containerID := m.Items[m.Cursor].Container.ID
+	tailLines := m.LogTailLines
+	if tailLines < 1 {
+		tailLines = 1000
+	}
 
 	return func() tea.Msg {
 		reader, err := m.DockerClient.ContainerLogs(context.Background(), containerID, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
-			Tail:       "100",
+			Tail:       strconv.Itoa(tailLines),
 			Timestamps: true,
 		})
 		if err != nil {
@@ -221,7 +227,7 @@ func LoadLogs(m *models.Model) tea.Cmd {
 }
 
 func FollowLogs(m *models.Model) tea.Cmd {
-	if m.ViewMode != models.ViewLogs || !m.FollowingLogs {
+	if m.ViewMode != models.ViewLogs || !m.LogViewer.FollowingLogs {
 		return nil
 	}
 	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
@@ -424,6 +430,8 @@ func InitialModel() (models.Model, error) {
 		ViewMode:        models.ViewDetails,
 		NavMode:         models.NavContainers,
 		AutoRefreshSecs: appConfig.Docker.AutoRefreshSeconds,
+		LogTailLines:    appConfig.Docker.LogTailLines,
+		LogViewer:       logviewer.New(&appConfig.KeyBindings.Logs, appConfig.UI.ShowLineNumbers, appConfig.UI.WrapLogs, ui.CopyToClipboard),
 	}
 
 	// Load initial data

@@ -55,6 +55,8 @@ const (
 
 	ColorSearchHighlightFG = "#000000" // Black (search highlight foreground)
 	ColorSearchHighlightBG = "#ffff00" // Yellow (search highlight background)
+
+	ColorVisualSelectionBG = "#264f78" // Visual selection background
 )
 
 // GetContainerStatusIcon returns the icon for a container status

@@ -59,6 +59,10 @@ type LogKeys struct {
 	NextResult []string `yaml:"next_result"`
 	PrevResult []string `yaml:"prev_result"`
 	Follow     []string `yaml:"follow"`
+	ToggleWrap []string `yaml:"toggle_wrap"`
+	VisualLine []string `yaml:"visual_line"`
+	CharVisual []string `yaml:"char_visual"`
+	Yank       []string `yaml:"yank"`
 }
 
 type CommandKeys struct {
@@ -74,6 +78,7 @@ type UIConfig struct {
 	ShowHeaderContext       bool `yaml:"show_header_context"`
 	ShowListHelpHint        bool `yaml:"show_list_help_hint"`
 	ShowLineNumbers         bool `yaml:"show_line_numbers"`
+	WrapLogs                bool `yaml:"wrap_logs"`
 	MaxProjectPreviewItems  int  `yaml:"max_project_preview_items"`
 	MaxContainerPortPreview int  `yaml:"max_container_port_preview"`
 	MaxImageTagPreview      int  `yaml:"max_image_tag_preview"`
@@ -88,6 +93,9 @@ type DockerConfig struct {
 	// AutoRefreshSeconds controls container list auto-refresh interval.
 	// Must be >= 1. Default is 10 seconds.
 	AutoRefreshSeconds int `yaml:"auto_refresh_seconds"`
+	// LogTailLines controls how many log lines to fetch initially.
+	// Default is 1000.
+	LogTailLines int `yaml:"log_tail_lines"`
 }
 
 // Default returns the default key bindings
@@ -124,6 +132,10 @@ func Default() *KeyBindings {
 			NextResult: []string{"n"},
 			PrevResult: []string{"N"},
 			Follow:     []string{"f"},
+			ToggleWrap: []string{"w"},
+			VisualLine: []string{"V"},
+			CharVisual: []string{"v"},
+			Yank:       []string{"y"},
 		},
 		Commands: CommandKeys{
 			Enter: []string{":"},
@@ -140,6 +152,7 @@ func DefaultUI() *UIConfig {
 		ShowHeaderContext:       true,
 		ShowListHelpHint:        true,
 		ShowLineNumbers:         true,
+		WrapLogs:                true,
 		MaxProjectPreviewItems:  8,
 		MaxContainerPortPreview: 4,
 		MaxImageTagPreview:      6,
@@ -160,6 +173,7 @@ func DefaultDocker() *DockerConfig {
 	return &DockerConfig{
 		Host:               "",
 		AutoRefreshSeconds: 10,
+		LogTailLines:       1000,
 	}
 }
 
@@ -177,6 +191,9 @@ func (c *AppConfig) sanitize() {
 	c.Docker.Host = strings.TrimSpace(c.Docker.Host)
 	if c.Docker.AutoRefreshSeconds < 1 {
 		c.Docker.AutoRefreshSeconds = 10
+	}
+	if c.Docker.LogTailLines < 1 {
+		c.Docker.LogTailLines = 1000
 	}
 }
 

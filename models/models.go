@@ -2,6 +2,7 @@ package models
 
 import (
 	"gdocker/config"
+	"gdocker/ui/logviewer"
 	"time"
 
 	"github.com/moby/moby/client"
@@ -21,15 +22,11 @@ type Model struct {
 	NavMode         NavigationMode
 	ViewMode        ViewMode
 	AutoRefreshSecs int
-	Logs            []string
-	LogScroll       int
+	LogTailLines    int
+	LogViewer       logviewer.Model
 	LogSince        time.Time
 	StatusMessage   string
 	DockerClient    *client.Client
-	SearchMode      bool   // Whether we're in search input mode
-	SearchQuery     string // Current search query
-	SearchResults   []int  // Line indices that match the search
-	SearchResultIdx int    // Current position in SearchResults
 	CommandMode     bool   // Whether we're in command mode (:)
 	CommandInput    string // Current command input
 	HelpMode        bool   // Whether we're in help view
@@ -40,7 +37,7 @@ type Model struct {
 	VolumeFiles     []string // Files in current volume directory
 	VolumePath      string   // Current path in volume
 	InspectData     string   // JSON inspect data
-	FollowingLogs   bool     // Whether logs are being followed
+	InspectScroll   int      // Scroll position for inspect view
 }
 
 type PortMapping struct {

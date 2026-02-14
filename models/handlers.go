@@ -2,7 +2,6 @@ package models
 
 import (
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -76,21 +75,9 @@ func buildKeyHandlerMap(m *Model) map[string]KeyHandler {
 		handlers[key] = handleOpenPort
 	}
 
-	// Command and search handlers
+	// Command handler
 	for _, key := range kb.Commands.Enter {
 		handlers[key] = handleCommandMode
-	}
-	for _, key := range kb.Logs.Search {
-		handlers[key] = handleSearch
-	}
-	for _, key := range kb.Logs.NextResult {
-		handlers[key] = handleNextSearchResult
-	}
-	for _, key := range kb.Logs.PrevResult {
-		handlers[key] = handlePrevSearchResult
-	}
-	for _, key := range kb.Logs.Follow {
-		handlers[key] = handleToggleLogFollow
 	}
 
 	// View handlers
@@ -110,9 +97,9 @@ func buildKeyHandlerMap(m *Model) map[string]KeyHandler {
 
 func handleNavigationUp(m *Model) (Model, tea.Cmd) {
 	switch m.ViewMode {
-	case ViewLogs, ViewInspect:
-		if m.LogScroll > 0 {
-			m.LogScroll--
+	case ViewInspect:
+		if m.InspectScroll > 0 {
+			m.InspectScroll--
 		}
 	case ViewPorts:
 		if m.SelectedPort > 0 {
@@ -128,13 +115,10 @@ func handleNavigationUp(m *Model) (Model, tea.Cmd) {
 
 func handleNavigationDown(m *Model) (Model, tea.Cmd) {
 	switch m.ViewMode {
-	case ViewLogs, ViewInspect:
-		maxLines := len(m.Logs)
-		if m.ViewMode == ViewInspect {
-			maxLines = len(strings.Split(m.InspectData, "\n"))
-		}
-		if m.LogScroll < maxLines-1 {
-			m.LogScroll++
+	case ViewInspect:
+		maxLines := len(strings.Split(m.InspectData, "\n"))
+		if m.InspectScroll < maxLines-1 {
+			m.InspectScroll++
 		}
 	case ViewPorts:
 		if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
@@ -151,8 +135,8 @@ func handleNavigationDown(m *Model) (Model, tea.Cmd) {
 }
 
 func handleNavigationTop(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewLogs || m.ViewMode == ViewInspect {
-		m.LogScroll = 0
+	if m.ViewMode == ViewInspect {
+		m.InspectScroll = 0
 	} else {
 		m.Cursor = 0
 	}
@@ -160,12 +144,8 @@ func handleNavigationTop(m *Model) (Model, tea.Cmd) {
 }
 
 func handleNavigationBottom(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewLogs || m.ViewMode == ViewInspect {
-		maxLines := len(m.Logs) - 1
-		if m.ViewMode == ViewInspect {
-			maxLines = len(strings.Split(m.InspectData, "\n")) - 1
-		}
-		m.LogScroll = maxLines
+	if m.ViewMode == ViewInspect {
+		m.InspectScroll = len(strings.Split(m.InspectData, "\n")) - 1
 	} else {
 		m.Cursor = len(m.Items) - 1
 	}
@@ -173,13 +153,11 @@ func handleNavigationBottom(m *Model) (Model, tea.Cmd) {
 }
 
 func handleToggleExpand(m *Model) (Model, tea.Cmd) {
-	// Toggle project expansion
 	if m.ViewMode == ViewDetails && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsProject {
 		idx := m.Items[m.Cursor].Index
 		m.Projects[idx].Expanded = !m.Projects[idx].Expanded
 		RebuildItemsFunc(m)
 	}
-	// Note: "enter" key in ports view is handled separately by handleOpenPort
 	return *m, nil
 }
 
@@ -290,7 +268,7 @@ func handleOpenPort(m *Model) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-// Command and search handlers
+// Command and view handlers
 
 func handleCommandMode(m *Model) (Model, tea.Cmd) {
 	m.CommandMode = true
@@ -299,71 +277,16 @@ func handleCommandMode(m *Model) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-func handleSearch(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewLogs {
-		m.SearchMode = true
-		m.SearchQuery = ""
-		m.StatusMessage = ""
-	}
-	return *m, nil
-}
-
-func handleNextSearchResult(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewLogs && len(m.SearchResults) > 0 {
-		m.SearchResultIdx++
-		if m.SearchResultIdx >= len(m.SearchResults) {
-			m.SearchResultIdx = 0
-		}
-		m.LogScroll = m.SearchResults[m.SearchResultIdx]
-		m.StatusMessage = formatSearchStatus(m)
-	}
-	return *m, nil
-}
-
-func handlePrevSearchResult(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewLogs && len(m.SearchResults) > 0 {
-		m.SearchResultIdx--
-		if m.SearchResultIdx < 0 {
-			m.SearchResultIdx = len(m.SearchResults) - 1
-		}
-		m.LogScroll = m.SearchResults[m.SearchResultIdx]
-		m.StatusMessage = formatSearchStatus(m)
-	}
-	return *m, nil
-}
-
-func handleToggleLogFollow(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode != ViewLogs {
-		return *m, nil
-	}
-
-	m.FollowingLogs = !m.FollowingLogs
-	if m.FollowingLogs {
-		m.StatusMessage = "Log follow enabled"
-		return *m, FollowLogsFunc(m)
-	}
-
-	m.StatusMessage = "Log follow paused"
-	return *m, nil
-}
-
-// View handlers
-
 func handleBack(m *Model) (Model, tea.Cmd) {
 	if m.HelpMode {
 		m.HelpMode = false
 		m.StatusMessage = ""
-	} else if m.ViewMode == ViewLogs || m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
+	} else if m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
 		m.ViewMode = ViewDetails
-		m.Logs = nil
-		m.LogSince = time.Time{}
-		m.FollowingLogs = false
 		m.SelectedPort = 0
-		m.SearchQuery = ""
-		m.SearchResults = nil
-		m.SearchResultIdx = 0
 		m.Stats = nil
 		m.InspectData = ""
+		m.InspectScroll = 0
 		m.StatusMessage = ""
 	}
 	return *m, nil
@@ -378,10 +301,8 @@ func handleForceQuit(m *Model) (Model, tea.Cmd) {
 
 // Command handlers
 
-// CommandHandler is a function that executes a command
 type CommandHandler func(*Model) tea.Cmd
 
-// buildCommandHandlerMap creates a map of command -> handler function
 func buildCommandHandlerMap() map[string]CommandHandler {
 	return map[string]CommandHandler{
 		"q":     cmdQuit,
@@ -412,9 +333,9 @@ func cmdStop(m *Model) tea.Cmd {
 }
 
 func cmdNoHighlight(m *Model) tea.Cmd {
-	m.SearchQuery = ""
-	m.SearchResults = nil
-	m.SearchResultIdx = 0
+	m.LogViewer.SearchQuery = ""
+	m.LogViewer.SearchResults = nil
+	m.LogViewer.SearchResultIdx = 0
 	m.StatusMessage = "Search cleared"
 	return nil
 }

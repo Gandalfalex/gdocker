@@ -2,6 +2,8 @@ package models
 
 import (
 	"fmt"
+	"gdocker/config"
+	"gdocker/ui/logviewer"
 	"strings"
 	"time"
 
@@ -46,7 +48,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, next
 
 	case LogFollowTickMsg:
-		if m.ViewMode == ViewLogs && m.FollowingLogs {
+		if m.ViewMode == ViewLogs && m.LogViewer.FollowingLogs {
 			return m, tea.Batch(logFollowTickCmd(), FollowLogsFunc(&m))
 		}
 		return m, nil
@@ -57,7 +59,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ContainersRefreshedMsg:
-		// Save expanded state
 		expandedProjects := make(map[string]bool)
 		for _, p := range m.Projects {
 			if p.Expanded {
@@ -65,11 +66,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Refresh containers
 		m.Containers = msg.Containers
 		m.Standalone, m.Projects = GroupByProjectFunc(msg.Containers)
 
-		// Restore expanded state
 		for i := range m.Projects {
 			if expandedProjects[m.Projects[i].Name] {
 				m.Projects[i].Expanded = true
@@ -80,31 +79,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case LogsLoadedMsg:
-		m.Logs = msg.Lines
-		m.LogScroll = len(msg.Lines) - 1 // Scroll to bottom
+		containerName := "container"
+		if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+			containerName = m.Items[m.Cursor].Container.Name
+		}
+		m.LogViewer.SetLines(msg.Lines, containerName)
 		m.LogSince = msg.Since
 		m.ViewMode = ViewLogs
-		m.FollowingLogs = msg.Follow
-		if m.FollowingLogs {
+		m.LogViewer.FollowingLogs = msg.Follow
+		if m.LogViewer.FollowingLogs {
 			return m, logFollowTickCmd()
 		}
 		return m, nil
 
 	case LogsFollowedMsg:
 		if len(msg.Lines) > 0 {
-			for _, line := range msg.Lines {
-				// Skip immediate duplicates caused by coarse timestamp "since" filters.
-				if len(m.Logs) == 0 || m.Logs[len(m.Logs)-1] != line {
-					m.Logs = append(m.Logs, line)
-				}
-			}
-			m.LogScroll = len(m.Logs) - 1
-			if m.SearchQuery != "" {
-				performSearch(&m)
-				if len(m.SearchResults) > 0 {
-					m.LogScroll = len(m.Logs) - 1
-				}
-			}
+			m.LogViewer.AppendLines(msg.Lines)
 		}
 		if !msg.Since.IsZero() {
 			m.LogSince = msg.Since
@@ -119,7 +109,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ActionResultMsg:
 		m.StatusMessage = msg.Message
 		if msg.Success {
-			// Refresh based on navigation mode
 			switch m.NavMode {
 			case NavContainers:
 				return m, RefreshContainersFunc(&m)
@@ -146,19 +135,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case InspectLoadedMsg:
 		m.InspectData = msg.Data
 		m.ViewMode = ViewInspect
-		m.LogScroll = 0
+		m.InspectScroll = 0
 		return m, nil
 
 	case tea.KeyMsg:
-		// Handle command mode input
+		// Command mode input
 		if m.CommandMode {
 			switch msg.String() {
 			case "enter":
-				// Execute command
 				m.CommandMode = false
 				return m, executeCommand(&m)
 			case "esc":
-				// Cancel command
 				m.CommandMode = false
 				m.CommandInput = ""
 				m.StatusMessage = ""
@@ -169,7 +156,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// Add character to command input
 				if len(msg.String()) == 1 {
 					m.CommandInput += msg.String()
 				}
@@ -177,38 +163,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Handle search mode input
-		if m.SearchMode {
-			switch msg.String() {
-			case "enter":
-				// Execute search
-				m.SearchMode = false
-				performSearch(&m)
-				return m, nil
-			case "esc":
-				// Cancel search
-				m.SearchMode = false
-				m.SearchQuery = ""
-				m.StatusMessage = ""
-				return m, nil
-			case "backspace":
-				if len(m.SearchQuery) > 0 {
-					m.SearchQuery = m.SearchQuery[:len(m.SearchQuery)-1]
-				}
-				return m, nil
-			default:
-				// Add character to search query
-				if len(msg.String()) == 1 {
-					m.SearchQuery += msg.String()
-				}
-				return m, nil
-			}
+		// Allow entering command mode from any view (including logs).
+		if config.Contains(m.KeyBindings.Commands.Enter, msg.String()) {
+			m.CommandMode = true
+			m.CommandInput = ""
+			m.StatusMessage = ""
+			return m, nil
 		}
 
-		// Build key handler map
-		keyHandlers := buildKeyHandlerMap(&m)
+		// Delegate to log viewer when in log view
+		if m.ViewMode == ViewLogs {
+			updated, cmd := m.LogViewer.Update(msg)
+			m.LogViewer = updated
+			// Process output messages from the component
+			if cmd != nil {
+				outMsg := cmd()
+				switch outMsg := outMsg.(type) {
+				case logviewer.StatusMsg:
+					m.StatusMessage = outMsg.Text
+					return m, nil
+				case logviewer.FollowRequestMsg:
+					m.StatusMessage = "Log follow enabled"
+					return m, FollowLogsFunc(&m)
+				case logviewer.ExitMsg:
+					m.ViewMode = ViewDetails
+					m.LogSince = time.Time{}
+					m.StatusMessage = ""
+					return m, nil
+				default:
+					return m, cmd
+				}
+			}
+			return m, nil
+		}
 
-		// Look up and execute handler for this key
+		// Build key handler map for non-log views
+		keyHandlers := buildKeyHandlerMap(&m)
 		key := msg.String()
 		if handler, exists := keyHandlers[key]; exists {
 			return handler(&m)
@@ -222,53 +212,15 @@ func (m Model) View() string {
 	return RenderViewFunc(&m)
 }
 
-func performSearch(m *Model) {
-	if m.SearchQuery == "" {
-		m.SearchResults = nil
-		m.SearchResultIdx = 0
-		return
-	}
-
-	var results []int
-	query := strings.ToLower(m.SearchQuery)
-
-	for i, line := range m.Logs {
-		if strings.Contains(strings.ToLower(line), query) {
-			results = append(results, i)
-		}
-	}
-
-	m.SearchResults = results
-	m.SearchResultIdx = 0
-
-	if len(results) > 0 {
-		m.LogScroll = results[0]
-		m.StatusMessage = formatSearchStatus(m)
-	} else {
-		m.StatusMessage = "No matches found"
-	}
-}
-
-func formatSearchStatus(m *Model) string {
-	if len(m.SearchResults) == 0 {
-		return "No matches"
-	}
-	return fmt.Sprintf("Match %d/%d", m.SearchResultIdx+1, len(m.SearchResults))
-}
-
 func executeCommand(m *Model) tea.Cmd {
 	cmd := strings.TrimSpace(m.CommandInput)
 	m.CommandInput = ""
 
-	// Build command handler map
 	commandHandlers := buildCommandHandlerMap()
-
-	// Look up and execute command handler
 	if handler, exists := commandHandlers[cmd]; exists {
 		return handler(m)
 	}
 
-	// Unknown command
 	m.StatusMessage = fmt.Sprintf("Unknown command: %s", cmd)
 	return nil
 }

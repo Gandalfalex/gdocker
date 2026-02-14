@@ -43,7 +43,7 @@ func RenderView(m *models.Model) string {
 	var right string
 	switch m.ViewMode {
 	case models.ViewLogs:
-		right = RenderLogs(m, rightWidth, m.Height-2)
+		right = m.LogViewer.View(rightWidth, m.Height-2)
 	case models.ViewPorts:
 		right = RenderPorts(m, rightWidth, m.Height-2)
 	case models.ViewEnv:
@@ -79,8 +79,8 @@ func RenderView(m *models.Model) string {
 	// Priority 1: Command/search mode (highest priority)
 	if m.CommandMode {
 		statusText = ":" + m.CommandInput + "█ • enter: execute • esc: cancel"
-	} else if m.SearchMode {
-		statusText = "?" + m.SearchQuery + "█ • enter: search • esc: cancel"
+	} else if m.ViewMode == models.ViewLogs && m.LogViewer.IsSearchMode() {
+		statusText = m.LogViewer.StatusBarHint()
 	} else if m.StatusMessage != "" {
 		// Priority 2: Status messages (but not while in command/search mode)
 		statusText = m.StatusMessage
@@ -88,11 +88,7 @@ func RenderView(m *models.Model) string {
 		// Priority 3: Context-specific shortcuts
 		switch m.ViewMode {
 		case models.ViewLogs:
-			follow := "off"
-			if m.FollowingLogs {
-				follow = "on"
-			}
-			statusText = "j/k: scroll • g/G: top/bottom • ?: search • n/N: next/prev • f: follow(" + follow + ") • :noh: clear • esc: back • :: cmd"
+			statusText = m.LogViewer.StatusBarHint()
 		case models.ViewPorts:
 			statusText = "j/k: select port • o/enter: open in browser • esc: back • :: cmd"
 		case models.ViewEnv:
@@ -570,105 +566,6 @@ func RenderEnv(m *models.Model, width, height int) string {
 	return s.String()
 }
 
-func RenderLogs(m *models.Model, width, height int) string {
-	var s strings.Builder
-	cfg := uiConfig(m)
-
-	containerName := "container"
-	if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-		containerName = m.Items[m.Cursor].Container.Name
-	}
-	mode := "paused"
-	if m.FollowingLogs {
-		mode = "following"
-	}
-	s.WriteString(renderPaneHeader("Logs", fmt.Sprintf("%s • %d lines • %s", containerName, len(m.Logs), mode)))
-
-	if len(m.Logs) == 0 {
-		s.WriteString("No logs available")
-		return s.String()
-	}
-
-	if m.SearchQuery != "" {
-		searchStatus := fmt.Sprintf("Search: %q (%d matches)", m.SearchQuery, len(m.SearchResults))
-		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(searchStatus) + "\n\n")
-	}
-
-	// Calculate visible window
-	maxVisible := max(height-7, 1)
-
-	// Ensure scroll position is valid
-	scrollPos := m.LogScroll
-	if scrollPos >= len(m.Logs) {
-		scrollPos = len(m.Logs) - 1
-	}
-	if scrollPos < 0 {
-		scrollPos = 0
-	}
-
-	// Calculate start position to keep cursor centered
-	start := max(scrollPos-maxVisible/2, 0)
-
-	end := start + maxVisible
-	if end > len(m.Logs) {
-		end = len(m.Logs)
-		// Adjust start if we're at the end
-		start = max(end-maxVisible, 0)
-	}
-
-	// Create a map of search result lines for quick lookup
-	searchResultMap := make(map[int]bool)
-	for _, idx := range m.SearchResults {
-		searchResultMap[idx] = true
-	}
-
-	// Show logs in window
-	for i := start; i < end; i++ {
-		line := m.Logs[i]
-		gutter := ""
-		if cfg.ShowLineNumbers {
-			gutter = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(ColorMuted)).
-				Render(fmt.Sprintf("%4d ", i+1))
-		}
-
-		// Truncate long lines to fit width
-		maxLineWidth := width - 4
-		if cfg.ShowLineNumbers {
-			maxLineWidth = width - 9
-		}
-		if maxLineWidth < 12 {
-			maxLineWidth = 12
-		}
-		if len(line) > maxLineWidth {
-			line = line[:maxLineWidth-3] + "..."
-		}
-
-		// Highlight search matches in the line
-		if m.SearchQuery != "" && searchResultMap[i] {
-			line = highlightSearchTerm(line, m.SearchQuery)
-		}
-
-		if i == scrollPos {
-			// Highlight current line
-			line = lipgloss.NewStyle().
-				Background(lipgloss.Color(ColorHighlight)).
-				Render(gutter + line)
-		} else {
-			line = gutter + line
-		}
-		s.WriteString(line + "\n")
-	}
-
-	// Show position indicator
-	s.WriteString("\n")
-	progress := int(float64(scrollPos+1) / float64(len(m.Logs)) * 100)
-	indicator := fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(m.Logs), start+1, end, progress)
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)).Render(indicator))
-
-	return s.String()
-}
-
 func renderLabel(label string) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(ColorMuted)).
@@ -691,49 +588,6 @@ func formatTimeAgo(t time.Time) string {
 		days := int(duration.Hours() / 24)
 		return fmt.Sprintf("%d days ago", days)
 	}
-}
-
-func highlightSearchTerm(line, query string) string {
-	if query == "" {
-		return line
-	}
-
-	lowerLine := strings.ToLower(line)
-	lowerQuery := strings.ToLower(query)
-
-	// Find the position of the query in the line
-	idx := strings.Index(lowerLine, lowerQuery)
-	if idx == -1 {
-		return line
-	}
-
-	// Highlight all occurrences
-	var result strings.Builder
-	lastIdx := 0
-
-	for idx != -1 {
-		// Add text before match
-		result.WriteString(line[lastIdx:idx])
-
-		// Add highlighted match
-		match := line[idx : idx+len(query)]
-		highlighted := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSearchHighlightFG)).
-			Background(lipgloss.Color(ColorSearchHighlightBG)).
-			Render(match)
-		result.WriteString(highlighted)
-
-		lastIdx = idx + len(query)
-		idx = strings.Index(lowerLine[lastIdx:], lowerQuery)
-		if idx != -1 {
-			idx += lastIdx
-		}
-	}
-
-	// Add remaining text
-	result.WriteString(line[lastIdx:])
-
-	return result.String()
 }
 
 func RenderStats(m *models.Model, width, height int) string {
@@ -806,7 +660,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 	maxVisible := max(height-7, 1)
 
 	// Ensure scroll position is valid
-	scrollPos := m.LogScroll
+	scrollPos := m.InspectScroll
 	if scrollPos >= len(lines) {
 		scrollPos = len(lines) - 1
 	}
@@ -991,6 +845,10 @@ func RenderHelp(m *models.Model, width, height int) string {
 		{key: "?", desc: "Search in logs"},
 		{key: "n/N", desc: "Next/previous search result"},
 		{key: "f", desc: "Toggle live log follow"},
+		{key: "w", desc: "Toggle line wrapping"},
+		{key: "V", desc: "Visual line select (then y to yank)"},
+		{key: "v", desc: "Visual char select (w/b/e/h/l motions)"},
+		{key: "y", desc: "Yank current line / selection"},
 		{key: ":noh", desc: "Clear search highlighting"},
 	}))
 	s.WriteString("\n")
