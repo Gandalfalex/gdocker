@@ -532,6 +532,10 @@ func RenderEnv(m *models.Model, width, height int) string {
 
 	c := m.Items[m.Cursor].Container
 	s.WriteString(renderPaneHeader("Environment Variables", fmt.Sprintf("%s • %d vars", c.Name, len(c.Env))))
+	if !c.EnvLoaded {
+		s.WriteString("Loading environment variables...")
+		return s.String()
+	}
 	if len(c.Env) == 0 {
 		s.WriteString("No environment variables")
 		return s.String()
@@ -862,6 +866,7 @@ func RenderHelp(m *models.Model, width, height int) string {
 	s.WriteString(renderHelpSection("General", []helpEntry{
 		{key: ":q", desc: "Quit application"},
 		{key: ":help", desc: "Show this help"},
+		{key: ":ssh <host>", desc: "Connect Docker over SSH (or alias)"},
 		{key: "esc", desc: "Go back/close view"},
 		{key: "ctrl+c", desc: "Force quit"},
 		{key: ":", desc: "Enter command mode"},

@@ -1,6 +1,10 @@
 package models
 
 import (
+	"bufio"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -241,6 +245,10 @@ func handlePorts(m *Model) (Model, tea.Cmd) {
 func handleEnv(m *Model) (Model, tea.Cmd) {
 	if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
 		m.ViewMode = ViewEnv
+		if !m.Items[m.Cursor].Container.EnvLoaded && LoadEnvFunc != nil {
+			m.StatusMessage = "Loading environment variables..."
+			return *m, LoadEnvFunc(m)
+		}
 	}
 	return *m, nil
 }
@@ -344,4 +352,271 @@ func cmdHelp(m *Model) tea.Cmd {
 	m.HelpMode = true
 	m.StatusMessage = ""
 	return nil
+}
+
+func cmdSSH(m *Model, args []string) tea.Cmd {
+	if len(args) < 1 {
+		m.StatusMessage = "Usage: :ssh <alias|host|local>"
+		return nil
+	}
+	if ConnectDockerHostFunc == nil {
+		m.StatusMessage = "SSH connection command is not available"
+		return nil
+	}
+
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		m.StatusMessage = "Usage: :ssh <alias|host|local>"
+		return nil
+	}
+
+	host := ""
+	label := "local Docker"
+	if target != "local" {
+		if !strings.Contains(target, "://") {
+			// Prefer ~/.ssh/config host aliases first so SSH options
+			// (HostName, User, Port) are respected.
+			if endpoint, ok := sshConfigHostEndpointResolver(target); ok {
+				target = endpoint
+			} else if alias, ok := m.HostAliases[target]; ok {
+				target = alias
+			}
+			if !strings.Contains(target, "://") {
+				target = "ssh://" + target
+			}
+		}
+		host = target
+		label = host
+	}
+
+	m.StatusMessage = "Connecting to " + label + "..."
+	return ConnectDockerHostFunc(m, host)
+}
+
+var sshConfigHostEndpointResolver = resolveSSHConfigHostEndpoint
+var sshConfigHostAliasListProvider = listSSHConfigHostAliases
+
+func resolveSSHConfigHostEndpoint(alias string) (string, bool) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return "", false
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	configPath := filepath.Join(homeDir, ".ssh", "config")
+
+	visited := make(map[string]bool)
+	if !hasSSHConfigHostAliasInFile(alias, configPath, visited) {
+		return "", false
+	}
+
+	// Keep alias verbatim so OpenSSH can apply full config
+	// (IdentityFile, ProxyJump, HostName, User, Port, etc.).
+	return "ssh://" + alias, true
+}
+
+func hasSSHConfigHostAliasInFile(alias, configPath string, visited map[string]bool) bool {
+	configPath = filepath.Clean(configPath)
+	if visited[configPath] {
+		return false
+	}
+	visited[configPath] = true
+
+	f, err := os.Open(configPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	baseDir := filepath.Dir(configPath)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch {
+		case strings.EqualFold(fields[0], "Include"):
+			for _, includePattern := range fields[1:] {
+				includePattern = strings.Trim(includePattern, "\"'")
+				if includePattern == "" {
+					continue
+				}
+				if !filepath.IsAbs(includePattern) {
+					includePattern = filepath.Join(baseDir, includePattern)
+				}
+				matches, err := filepath.Glob(includePattern)
+				if err != nil {
+					continue
+				}
+				for _, includePath := range matches {
+					if hasSSHConfigHostAliasInFile(alias, includePath, visited) {
+						return true
+					}
+				}
+			}
+		case strings.EqualFold(fields[0], "Host"):
+			if hostPatternsMatchAlias(fields[1:], alias) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func hasSSHConfigHostAlias(alias string) bool {
+	_, ok := resolveSSHConfigHostEndpoint(alias)
+	return ok
+}
+
+func getSSHCompletionCandidates(m *Model) []string {
+	seen := make(map[string]struct{})
+
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		seen[v] = struct{}{}
+	}
+
+	add("local")
+	for alias := range m.HostAliases {
+		add(alias)
+	}
+	for _, alias := range sshConfigHostAliasListProvider() {
+		add(alias)
+	}
+
+	candidates := make([]string, 0, len(seen))
+	for alias := range seen {
+		candidates = append(candidates, alias)
+	}
+	return candidates
+}
+
+func listSSHConfigHostAliases() []string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	configPath := filepath.Join(homeDir, ".ssh", "config")
+	visited := make(map[string]bool)
+	set := make(map[string]struct{})
+	collectSSHConfigHostAliasesFromFile(configPath, visited, set)
+
+	out := make([]string, 0, len(set))
+	for alias := range set {
+		out = append(out, alias)
+	}
+	return out
+}
+
+func collectSSHConfigHostAliasesFromFile(configPath string, visited map[string]bool, set map[string]struct{}) {
+	configPath = filepath.Clean(configPath)
+	if visited[configPath] {
+		return
+	}
+	visited[configPath] = true
+
+	f, err := os.Open(configPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	baseDir := filepath.Dir(configPath)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch {
+		case strings.EqualFold(fields[0], "Include"):
+			for _, includePattern := range fields[1:] {
+				includePattern = strings.Trim(includePattern, "\"'")
+				if includePattern == "" {
+					continue
+				}
+				if !filepath.IsAbs(includePattern) {
+					includePattern = filepath.Join(baseDir, includePattern)
+				}
+				matches, err := filepath.Glob(includePattern)
+				if err != nil {
+					continue
+				}
+				for _, includePath := range matches {
+					collectSSHConfigHostAliasesFromFile(includePath, visited, set)
+				}
+			}
+		case strings.EqualFold(fields[0], "Host"):
+			for _, raw := range fields[1:] {
+				p := strings.Trim(strings.TrimSpace(raw), "\"'")
+				if p == "" || strings.HasPrefix(p, "!") || strings.ContainsAny(p, "*?") {
+					continue
+				}
+				set[p] = struct{}{}
+			}
+		}
+	}
+}
+
+func hostPatternsMatchAlias(patterns []string, alias string) bool {
+	aliasLower := strings.ToLower(alias)
+	positiveMatch := false
+
+	for _, raw := range patterns {
+		p := strings.Trim(strings.TrimSpace(raw), "\"'")
+		if p == "" {
+			continue
+		}
+		negated := strings.HasPrefix(p, "!")
+		if negated {
+			p = p[1:]
+		}
+		if p == "" {
+			continue
+		}
+
+		matched := false
+		if strings.ContainsAny(p, "*?") {
+			ok, err := path.Match(strings.ToLower(p), aliasLower)
+			if err == nil {
+				matched = ok
+			}
+		} else if strings.EqualFold(p, alias) {
+			matched = true
+		}
+
+		if matched && negated {
+			return false
+		}
+		if matched {
+			positiveMatch = true
+		}
+	}
+
+	return positiveMatch
 }

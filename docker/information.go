@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
 
@@ -14,14 +15,53 @@ func LoadContainers(m *models.Model) error {
 	if err != nil {
 		return err
 	}
-	// Parse containers
-	var containers []models.Container
-	for _, c := range containerList.Items {
-		name := strings.TrimPrefix(c.Names[0], "/")
+	containers := containersFromList(containerList.Items, envCacheFromContainers(m.Containers))
+
+	// Group by compose projects
+	m.Containers = containers
+	m.Standalone, m.Projects = GroupByProject(containers)
+	RebuildItems(m)
+
+	return nil
+}
+
+type cachedContainerEnv struct {
+	loaded bool
+	env    []string
+}
+
+func envCacheFromContainers(containers []models.Container) map[string]cachedContainerEnv {
+	cache := make(map[string]cachedContainerEnv, len(containers))
+	for _, c := range containers {
+		id := c.FullID
+		if id == "" {
+			id = c.ID
+		}
+		if id == "" {
+			continue
+		}
+		cache[id] = cachedContainerEnv{
+			loaded: c.EnvLoaded,
+			env:    c.Env,
+		}
+	}
+	return cache
+}
+
+func containersFromList(items []container.Summary, envCache map[string]cachedContainerEnv) []models.Container {
+	containers := make([]models.Container, 0, len(items))
+	for _, c := range items {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		if name == "" {
+			name = shortID(c.ID)
+		}
+
 		project := c.Labels["com.docker.compose.project"]
 
-		// Parse ports
-		var ports []models.PortMapping
+		ports := make([]models.PortMapping, 0, len(c.Ports))
 		for _, p := range c.Ports {
 			ip := ""
 			if p.IP.IsValid() {
@@ -35,31 +75,23 @@ func LoadContainers(m *models.Model) error {
 			})
 		}
 
-		// Get environment variables by inspecting the container
-		var env []string
-		if inspect, err := m.DockerClient.ContainerInspect(context.Background(), c.ID, client.ContainerInspectOptions{}); err == nil {
-			env = inspect.Container.Config.Env
-		}
-
+		cached := envCache[c.ID]
 		containers = append(containers, models.Container{
-			ID:      c.ID[:12],
-			Name:    name,
-			Image:   c.Image,
-			State:   string(c.State),
-			Status:  c.Status,
-			Project: project,
-			Created: time.Unix(c.Created, 0),
-			Ports:   ports,
-			Env:     env,
+			ID:        shortID(c.ID),
+			FullID:    c.ID,
+			Name:      name,
+			Image:     c.Image,
+			State:     string(c.State),
+			Status:    c.Status,
+			Project:   project,
+			Created:   time.Unix(c.Created, 0),
+			Ports:     ports,
+			Env:       cached.env,
+			EnvLoaded: cached.loaded,
 		})
 	}
 
-	// Group by compose projects
-	m.Containers = containers
-	m.Standalone, m.Projects = GroupByProject(containers)
-	RebuildItems(m)
-
-	return nil
+	return containers
 }
 
 func GroupByProject(containers []models.Container) ([]models.Container, []models.ComposeGroup) {

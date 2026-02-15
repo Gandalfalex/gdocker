@@ -9,13 +9,16 @@ import (
 	"gdocker/ui"
 	"gdocker/ui/logviewer"
 	"io"
+	"net/http"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/docker/cli/cli/connhelper"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -28,6 +31,8 @@ func init() {
 	models.RebuildImageItemsFunc = RebuildImageItems
 	models.RebuildNetworkItemsFunc = RebuildNetworkItems
 	models.RefreshContainersFunc = RefreshContainers
+	models.LoadEnvFunc = LoadEnv
+	models.ConnectDockerHostFunc = ConnectDockerHost
 	models.StartContainerFunc = StartContainer
 	models.StopContainerFunc = StopContainer
 	models.RestartContainerFunc = RestartContainer
@@ -36,6 +41,7 @@ func init() {
 	models.DeleteImageFunc = DeleteImage
 	models.LoadLogsFunc = LoadLogs
 	models.FollowLogsFunc = FollowLogs
+	models.StopFollowLogsFunc = StopFollowLogs
 	models.LoadInspectFunc = LoadInspect
 	models.ExecShellFunc = ExecShell
 	models.OpenPortInBrowserFunc = OpenPortInBrowser
@@ -44,52 +50,143 @@ func init() {
 }
 
 func RefreshContainers(m *models.Model) tea.Cmd {
+	prevIDsByName := make(map[string]string, len(m.Containers))
+	for _, c := range m.Containers {
+		id := containerRuntimeID(&c)
+		if id == "" {
+			continue
+		}
+		prevIDsByName[c.Name] = id
+	}
+	envCache := envCacheFromContainers(m.Containers)
+
 	return func() tea.Msg {
 		containerList, err := m.DockerClient.ContainerList(context.Background(), client.ContainerListOptions{All: true})
 		if err != nil {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Error: %v", err), Success: false}
 		}
+		containers := containersFromList(containerList.Items, envCache)
 
-		var containers []models.Container
-		for _, c := range containerList.Items {
-			name := strings.TrimPrefix(c.Names[0], "/")
-			project := c.Labels["com.docker.compose.project"]
-
-			// Parse ports
-			var ports []models.PortMapping
-			for _, p := range c.Ports {
-				ip := ""
-				if p.IP.IsValid() {
-					ip = p.IP.String()
-				}
-				ports = append(ports, models.PortMapping{
-					PrivatePort: p.PrivatePort,
-					PublicPort:  p.PublicPort,
-					Type:        p.Type,
-					IP:          ip,
+		recreated := make([]models.ContainerRecreated, 0)
+		for _, c := range containers {
+			oldID, ok := prevIDsByName[c.Name]
+			if !ok {
+				continue
+			}
+			newID := containerRuntimeID(&c)
+			if oldID != "" && newID != "" && oldID != newID {
+				recreated = append(recreated, models.ContainerRecreated{
+					Name:  c.Name,
+					OldID: oldID,
+					NewID: newID,
 				})
 			}
-
-			// Get environment variables by inspecting the container
-			var env []string
-			if inspect, err := m.DockerClient.ContainerInspect(context.Background(), c.ID, client.ContainerInspectOptions{}); err == nil {
-				env = inspect.Container.Config.Env
-			}
-
-			containers = append(containers, models.Container{
-				ID:      c.ID[:12],
-				Name:    name,
-				Image:   c.Image,
-				State:   string(c.State),
-				Status:  c.Status,
-				Project: project,
-				Created: time.Unix(c.Created, 0),
-				Ports:   ports,
-				Env:     env,
-			})
 		}
 
-		return models.ContainersRefreshedMsg{Containers: containers}
+		return models.ContainersRefreshedMsg{
+			Containers: containers,
+			Recreated:  recreated,
+		}
+	}
+}
+
+type logFollowState struct {
+	containerID string
+	ch          chan tea.Msg
+	cancel      context.CancelFunc
+}
+
+var (
+	logFollowMu    sync.Mutex
+	activeFollower *logFollowState
+	logFollowRun   = runLogFollower
+)
+
+func ensureLogFollower(cli *client.Client, containerID string, since time.Time) *logFollowState {
+	logFollowMu.Lock()
+	defer logFollowMu.Unlock()
+
+	if activeFollower != nil && activeFollower.containerID == containerID {
+		return activeFollower
+	}
+
+	stopActiveLogFollowerLocked()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	state := &logFollowState{
+		containerID: containerID,
+		ch:          make(chan tea.Msg, 64),
+		cancel:      cancel,
+	}
+	activeFollower = state
+	go logFollowRun(ctx, cli, containerID, since, state.ch)
+	return state
+}
+
+func StopFollowLogs(_ *models.Model) {
+	logFollowMu.Lock()
+	defer logFollowMu.Unlock()
+	stopActiveLogFollowerLocked()
+}
+
+func stopActiveLogFollowerLocked() {
+	if activeFollower == nil {
+		return
+	}
+	activeFollower.cancel()
+	activeFollower = nil
+}
+
+func runLogFollower(ctx context.Context, cli *client.Client, containerID string, since time.Time, ch chan tea.Msg) {
+	defer close(ch)
+
+	reader, err := cli.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       "0",
+		Follow:     true,
+		Timestamps: true,
+		Since:      since.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		select {
+		case ch <- models.ActionResultMsg{Message: fmt.Sprintf("Failed to follow logs: %v", err), Success: false}:
+		case <-ctx.Done():
+		}
+		return
+	}
+	defer reader.Close()
+
+	buf := make([]byte, 8) // Docker log header is 8 bytes
+	for {
+		_, err := io.ReadFull(reader, buf)
+		if err != nil {
+			return
+		}
+
+		size := uint32(buf[4])<<24 | uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7])
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			return
+		}
+
+		line := strings.TrimSpace(string(payload))
+		if line == "" {
+			continue
+		}
+
+		newest := since
+		if ts, ok := parseLogTimestamp(line); ok {
+			newest = ts
+			since = ts
+		}
+
+		select {
+		case ch <- models.LogsFollowedMsg{Lines: []string{line}, Since: newest}:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -98,7 +195,7 @@ func StartContainer(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		_, err := m.DockerClient.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
@@ -114,7 +211,7 @@ func StopContainer(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		timeout := 10
@@ -131,7 +228,7 @@ func RestartContainer(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		timeout := 10
@@ -148,7 +245,7 @@ func DeleteContainer(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		_, err := m.DockerClient.ContainerRemove(context.Background(), containerID, client.ContainerRemoveOptions{Force: true})
@@ -164,7 +261,7 @@ func LoadLogs(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 	tailLines := m.LogTailLines
 	if tailLines < 1 {
 		tailLines = 1000
@@ -228,33 +325,29 @@ func LoadLogs(m *models.Model) tea.Cmd {
 
 func FollowLogs(m *models.Model) tea.Cmd {
 	if m.ViewMode != models.ViewLogs || !m.LogViewer.FollowingLogs {
+		StopFollowLogs(m)
 		return nil
 	}
 	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
+		StopFollowLogs(m)
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 	since := m.LogSince
 	if since.IsZero() {
 		since = time.Now()
 	}
-
+	follower := ensureLogFollower(m.DockerClient, containerID, since)
+	if follower == nil {
+		return nil
+	}
 	return func() tea.Msg {
-		reader, err := m.DockerClient.ContainerLogs(context.Background(), containerID, client.ContainerLogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Tail:       "0",
-			Timestamps: true,
-			Since:      strconv.FormatInt(since.Unix(), 10),
-		})
-		if err != nil {
-			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to follow logs: %v", err), Success: false}
+		msg, ok := <-follower.ch
+		if !ok {
+			return models.LogFollowStoppedMsg{}
 		}
-		defer reader.Close()
-
-		lines, newest := decodeDockerLogStream(reader, time.Now())
-		return models.LogsFollowedMsg{Lines: lines, Since: newest}
+		return msg
 	}
 }
 
@@ -304,12 +397,29 @@ func parseLogTimestamp(line string) (time.Time, bool) {
 	return ts, true
 }
 
+func containerRuntimeID(c *models.Container) string {
+	if c == nil {
+		return ""
+	}
+	if c.FullID != "" {
+		return c.FullID
+	}
+	return c.ID
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
 func ExecShell(m *models.Model) tea.Cmd {
 	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 	containerName := m.Items[m.Cursor].Container.Name
 
 	// Try different shells in order of preference
@@ -410,15 +520,7 @@ func InitialModel() (models.Model, error) {
 	}
 
 	// Connect to Docker. Configured host overrides DOCKER_HOST.
-	clientOpts := []client.Opt{
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	}
-	if appConfig.Docker.Host != "" {
-		clientOpts = append(clientOpts, client.WithHost(appConfig.Docker.Host))
-	}
-
-	cli, err := client.NewClientWithOpts(clientOpts...)
+	cli, err := buildDockerClient(appConfig.Docker.Host)
 	if err != nil {
 		return models.Model{}, err
 	}
@@ -427,6 +529,8 @@ func InitialModel() (models.Model, error) {
 		KeyBindings:     &appConfig.KeyBindings,
 		UIConfig:        &appConfig.UI,
 		DockerClient:    cli,
+		DockerHost:      appConfig.Docker.Host,
+		HostAliases:     appConfig.Docker.HostAliases,
 		ViewMode:        models.ViewDetails,
 		NavMode:         models.NavContainers,
 		AutoRefreshSecs: appConfig.Docker.AutoRefreshSeconds,
@@ -456,9 +560,81 @@ func Init(m models.Model) tea.Cmd {
 }
 
 func Quit(m *models.Model) {
+	StopFollowLogs(m)
 	if m.DockerClient != nil {
 		m.DockerClient.Close()
 	}
+}
+
+func ConnectDockerHost(m *models.Model, host string) tea.Cmd {
+	return func() tea.Msg {
+		cli, err := buildDockerClient(host)
+		if err != nil {
+			return models.ActionResultMsg{Message: fmt.Sprintf("Connect failed: %v", err), Success: false}
+		}
+
+		if _, err := cli.Ping(context.Background(), client.PingOptions{}); err != nil {
+			cli.Close()
+			return models.ActionResultMsg{Message: fmt.Sprintf("Ping failed: %v", err), Success: false}
+		}
+
+		tmp := models.Model{DockerClient: cli}
+		if err := LoadContainers(&tmp); err != nil {
+			cli.Close()
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed loading containers: %v", err), Success: false}
+		}
+		if err := LoadVolumes(&tmp); err != nil {
+			cli.Close()
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed loading volumes: %v", err), Success: false}
+		}
+		if err := LoadImages(&tmp); err != nil {
+			cli.Close()
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed loading images: %v", err), Success: false}
+		}
+		if err := LoadNetworks(&tmp); err != nil {
+			cli.Close()
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed loading networks: %v", err), Success: false}
+		}
+
+		return models.DockerConnectedMsg{
+			Client:     cli,
+			Host:       host,
+			Containers: tmp.Containers,
+			Volumes:    tmp.Volumes,
+			Images:     tmp.Images,
+			Networks:   tmp.Networks,
+		}
+	}
+}
+
+func buildDockerClient(host string) (*client.Client, error) {
+	if strings.HasPrefix(host, "ssh://") {
+		helper, err := connhelper.GetConnectionHelper(host)
+		if err != nil {
+			return nil, err
+		}
+		if helper != nil {
+			httpClient := &http.Client{
+				Transport: &http.Transport{
+					DialContext: helper.Dialer,
+				},
+			}
+			return client.NewClientWithOpts(
+				client.WithHost(helper.Host),
+				client.WithAPIVersionNegotiation(),
+				client.WithHTTPClient(httpClient),
+			)
+		}
+	}
+
+	opts := []client.Opt{
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	}
+	if host != "" {
+		opts = append(opts, client.WithHost(host))
+	}
+	return client.NewClientWithOpts(opts...)
 }
 
 func LoadStats(m *models.Model) tea.Cmd {
@@ -466,7 +642,7 @@ func LoadStats(m *models.Model) tea.Cmd {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -661,12 +837,30 @@ func DeleteImage(m *models.Model) tea.Cmd {
 	}
 }
 
+func LoadEnv(m *models.Model) tea.Cmd {
+	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
+		return nil
+	}
+
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
+	return func() tea.Msg {
+		data, err := m.DockerClient.ContainerInspect(context.Background(), containerID, client.ContainerInspectOptions{})
+		if err != nil {
+			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to load env: %v", err), Success: false}
+		}
+		return models.EnvLoadedMsg{
+			ContainerID: containerID,
+			Env:         data.Container.Config.Env,
+		}
+	}
+}
+
 func LoadInspect(m *models.Model) tea.Cmd {
 	if m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
 		return nil
 	}
 
-	containerID := m.Items[m.Cursor].Container.ID
+	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 
 	return func() tea.Msg {
 		data, err := m.DockerClient.ContainerInspect(context.Background(), containerID, client.ContainerInspectOptions{})

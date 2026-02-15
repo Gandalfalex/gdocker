@@ -9,35 +9,40 @@ import (
 )
 
 type Model struct {
-	KeyBindings     *config.KeyBindings
-	UIConfig        *config.UIConfig
-	Containers      []Container
-	Standalone      []Container
-	Projects        []ComposeGroup
-	Items           []ListItem
-	Cursor          int
-	SelectedPort    int // For port selection to open in browser
-	Width           int
-	Height          int
-	NavMode         NavigationMode
-	ViewMode        ViewMode
-	AutoRefreshSecs int
-	LogTailLines    int
-	LogViewer       logviewer.Model
-	LogSince        time.Time
-	StatusMessage   string
-	DockerClient    *client.Client
-	CommandMode     bool   // Whether we're in command mode (:)
-	CommandInput    string // Current command input
-	HelpMode        bool   // Whether we're in help view
-	Stats           *ContainerStats
-	Volumes         []Volume
-	Images          []Image
-	Networks        []Network
-	VolumeFiles     []string // Files in current volume directory
-	VolumePath      string   // Current path in volume
-	InspectData     string   // JSON inspect data
-	InspectScroll   int      // Scroll position for inspect view
+	KeyBindings           *config.KeyBindings
+	UIConfig              *config.UIConfig
+	Containers            []Container
+	Standalone            []Container
+	Projects              []ComposeGroup
+	Items                 []ListItem
+	Cursor                int
+	SelectedPort          int // For port selection to open in browser
+	Width                 int
+	Height                int
+	NavMode               NavigationMode
+	ViewMode              ViewMode
+	AutoRefreshSecs       int
+	LogTailLines          int
+	LogViewer             logviewer.Model
+	LogSince              time.Time
+	DockerHost            string
+	HostAliases           map[string]string
+	StatusMessage         string
+	DockerClient          *client.Client
+	CommandMode           bool   // Whether we're in command mode (:)
+	CommandInput          string // Current command input
+	CommandCompletions    []string
+	CommandCompletionIdx  int
+	CommandCompletionBase string
+	HelpMode              bool // Whether we're in help view
+	Stats                 *ContainerStats
+	Volumes               []Volume
+	Images                []Image
+	Networks              []Network
+	VolumeFiles           []string // Files in current volume directory
+	VolumePath            string   // Current path in volume
+	InspectData           string   // JSON inspect data
+	InspectScroll         int      // Scroll position for inspect view
 }
 
 type PortMapping struct {
@@ -59,15 +64,17 @@ type ContainerStats struct {
 
 // Container holds container info
 type Container struct {
-	ID      string
-	Name    string
-	Image   string
-	State   string
-	Status  string
-	Project string
-	Created time.Time
-	Ports   []PortMapping
-	Env     []string
+	ID        string
+	FullID    string
+	Name      string
+	Image     string
+	State     string
+	Status    string
+	Project   string
+	Created   time.Time
+	Ports     []PortMapping
+	Env       []string
+	EnvLoaded bool
 }
 
 // Volume holds volume info
@@ -147,6 +154,13 @@ const (
 // Messages
 type ContainersRefreshedMsg struct {
 	Containers []Container
+	Recreated  []ContainerRecreated
+}
+
+type ContainerRecreated struct {
+	Name  string
+	OldID string
+	NewID string
 }
 
 type LogsLoadedMsg struct {
@@ -194,6 +208,22 @@ type VolumeFilesMsg struct {
 	Path  string
 }
 
+type EnvLoadedMsg struct {
+	ContainerID string
+	Env         []string
+}
+
+type DockerConnectedMsg struct {
+	Client     *client.Client
+	Host       string
+	Containers []Container
+	Volumes    []Volume
+	Images     []Image
+	Networks   []Network
+}
+
 type AutoRefreshTickMsg struct{}
 
 type LogFollowTickMsg struct{}
+
+type LogFollowStoppedMsg struct{}

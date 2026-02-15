@@ -51,6 +51,8 @@ ui:
 docker:
   host: ""                       # Empty = use DOCKER_HOST/default socket
                                  # Example remote: "ssh://user@your-server"
+  host_aliases:                  # Optional aliases for :ssh command
+    orangepi: "ssh://pi@orangepi"
   auto_refresh_seconds: 10       # Auto-refresh containers list interval
 
 # Command mode commands (cannot be customized via keybindings):

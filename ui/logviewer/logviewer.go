@@ -60,9 +60,7 @@ func (m *Model) SetLines(lines []string, containerName string) {
 // AppendLines adds new lines (from follow mode) and scrolls to the bottom.
 func (m *Model) AppendLines(lines []string) {
 	for _, line := range lines {
-		if len(m.Lines) == 0 || m.Lines[len(m.Lines)-1] != line {
-			m.Lines = append(m.Lines, line)
-		}
+		m.Lines = append(m.Lines, line)
 	}
 	m.ScrollPos = len(m.Lines) - 1
 	// Re-run search if active

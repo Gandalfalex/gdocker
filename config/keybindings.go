@@ -90,6 +90,9 @@ type DockerConfig struct {
 	// unix:///var/run/docker.sock, tcp://host:2376, or ssh://user@host
 	// Empty value keeps Docker SDK environment/default behavior.
 	Host string `yaml:"host"`
+	// HostAliases maps short names to Docker endpoints (for :ssh command).
+	// Example: orangepi: ssh://pi@orangepi
+	HostAliases map[string]string `yaml:"host_aliases"`
 	// AutoRefreshSeconds controls container list auto-refresh interval.
 	// Must be >= 1. Default is 10 seconds.
 	AutoRefreshSeconds int `yaml:"auto_refresh_seconds"`
@@ -172,6 +175,7 @@ func DefaultAppConfig() *AppConfig {
 func DefaultDocker() *DockerConfig {
 	return &DockerConfig{
 		Host:               "",
+		HostAliases:        map[string]string{},
 		AutoRefreshSeconds: 10,
 		LogTailLines:       1000,
 	}
@@ -189,6 +193,20 @@ func (c *AppConfig) sanitize() {
 		c.UI.MaxImageTagPreview = 1
 	}
 	c.Docker.Host = strings.TrimSpace(c.Docker.Host)
+	if c.Docker.HostAliases == nil {
+		c.Docker.HostAliases = map[string]string{}
+	} else {
+		sanitized := make(map[string]string, len(c.Docker.HostAliases))
+		for k, v := range c.Docker.HostAliases {
+			key := strings.TrimSpace(k)
+			val := strings.TrimSpace(v)
+			if key == "" || val == "" {
+				continue
+			}
+			sanitized[key] = val
+		}
+		c.Docker.HostAliases = sanitized
+	}
 	if c.Docker.AutoRefreshSeconds < 1 {
 		c.Docker.AutoRefreshSeconds = 10
 	}
