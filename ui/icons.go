@@ -21,42 +21,44 @@ const (
 const (
 	IconExpanded    = "▼"
 	IconCollapsed   = "▶"
-	IconCursor      = ">"
+	IconCursor      = "▌"
 	IconNoCursor    = " "
 	IconInputCursor = "█"
 )
 
-// Colors
+// Colors: the Tokyo Night palette, shared with s3reader.
 const (
-	ColorRunning    = "#4ec9b0" // Green
-	ColorPaused     = "#dcdcaa" // Yellow
-	ColorRestarting = "#4ec9b0" // Green
-	ColorExited     = "#858585" // Gray
-	ColorDefault    = "#ce9178" // Orange
+	ColorRunning    = "#9ece6a" // Green
+	ColorPaused     = "#e0af68" // Yellow
+	ColorRestarting = "#7dcfff" // Cyan
+	ColorExited     = "#565f89" // Gray
+	ColorDefault    = "#ff9e64" // Orange
 
-	ColorVolume  = "#dcdcaa" // Yellow
-	ColorImage   = "#569cd6" // Blue
-	ColorNetwork = "#c586c0" // Purple
+	ColorVolume  = "#e0af68" // Yellow
+	ColorImage   = "#7dcfff" // Cyan
+	ColorNetwork = "#bb9af7" // Purple
 
-	ColorPrimary    = "#007acc" // Blue
-	ColorSecondary  = "#3e3e3e" // Dark gray
-	ColorBorder     = "#3e3e3e" // Dark gray
-	ColorBackground = "#1e1e1e" // Very dark gray
-	ColorForeground = "#d4d4d4" // Light gray
-	ColorMuted      = "#858585" // Gray
-	ColorSuccess    = "#4ec9b0" // Green
-	ColorWarning    = "#dcdcaa" // Yellow
-	ColorError      = "#f48771" // Red
-	ColorInfo       = "#569cd6" // Blue
-	ColorLabel      = "#608b4e" // Olive green
-	ColorTitle      = "#0e639c" // Title blue
-	ColorHighlight  = "#094771" // Selection/highlight background
-	ColorLink       = "#ce9178" // Link orange
+	ColorPrimary    = "#7aa2f7" // Accent blue
+	ColorSecondary  = "#3b4261" // Dark gray
+	ColorBorder     = "#3b4261" // Dark gray
+	ColorBackground = "#1f2335" // Bar background
+	ColorForeground = "#c0caf5" // Light gray
+	ColorMuted      = "#565f89" // Gray
+	ColorSuccess    = "#9ece6a" // Green
+	ColorWarning    = "#e0af68" // Yellow
+	ColorError      = "#f7768e" // Red
+	ColorInfo       = "#7dcfff" // Cyan
+	ColorLabel      = "#7aa2f7" // Field labels
+	ColorTitle      = "#7aa2f7" // Pane titles
+	ColorSection    = "#e0af68" // Section headings
+	ColorHighlight  = "#283457" // Selection/highlight background
+	ColorLink       = "#ff9e64" // Link orange
+	ColorOnAccent   = "#1a1b26" // Text on a colored badge
 
-	ColorSearchHighlightFG = "#000000" // Black (search highlight foreground)
-	ColorSearchHighlightBG = "#ffff00" // Yellow (search highlight background)
+	ColorSearchHighlightFG = "#1a1b26" // Search highlight foreground
+	ColorSearchHighlightBG = "#e0af68" // Search highlight background
 
-	ColorVisualSelectionBG = "#264f78" // Visual selection background
+	ColorVisualSelectionBG = "#3d59a1" // Visual selection background
 )
 
 // GetContainerStatusIcon returns the icon for a container status

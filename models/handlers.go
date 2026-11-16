@@ -5,156 +5,105 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"gdocker/config"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/Gandalfalex/vim-kit/cmdline"
+	"github.com/Gandalfalex/vim-kit/keys"
+	"github.com/Gandalfalex/vim-kit/motion"
 )
 
 // KeyHandler is a function that handles a key press
 type KeyHandler func(*Model) (Model, tea.Cmd)
 
-// buildKeyHandlerMap creates a map of key -> handler function based on keybindings config
-func buildKeyHandlerMap(m *Model) map[string]KeyHandler {
-	handlers := make(map[string]KeyHandler)
-	kb := m.KeyBindings
+// keyHandlers maps actions (the yaml names in config.KeyBindings) to
+// handlers. Motions (up, down, top, ...) are handled by applyMotion.
+var keyHandlers = map[keys.Action]KeyHandler{
+	"toggle_expand":    handleToggleExpand,
+	"switch_container": handleSwitchContainer,
+	"switch_volume":    handleSwitchVolume,
+	"switch_image":     handleSwitchImage,
+	"switch_network":   handleSwitchNetwork,
+	"restart":          handleRestart,
+	"delete":           handleDelete,
+	"logs":             handleLogs,
+	"exec":             handleExec,
+	"ports":            handlePorts,
+	"env":              handleEnv,
+	"stats":            handleStats,
+	"inspect":          handleInspect,
+	"open_port":        handleOpenPort,
+	"enter":            handleCommandMode,
+	"help":             handleHelp,
+	"back":             handleBack,
+	"force_quit":       handleForceQuit,
+}
 
-	// Navigation handlers
-	for _, key := range kb.Navigation.Up {
-		handlers[key] = handleNavigationUp
+// keymap returns the keymap for the current view, building it on first use.
+// Config is validated on load; should it still be invalid, defaults are used.
+func (m *Model) keymap() *keys.Keymap {
+	if m.keymaps == nil {
+		kb := m.KeyBindings
+		if kb == nil {
+			kb = config.Default()
+		}
+		m.keymaps = &keymaps{}
+		var err error
+		if m.keymaps.main, err = kb.MainKeymap(); err != nil {
+			m.keymaps.main, _ = config.Default().MainKeymap()
+		}
+		if m.keymaps.ports, err = kb.PortsKeymap(); err != nil {
+			m.keymaps.ports, _ = config.Default().PortsKeymap()
+		}
 	}
-	for _, key := range kb.Navigation.Down {
-		handlers[key] = handleNavigationDown
+	if m.ViewMode == ViewPorts {
+		return m.keymaps.ports
 	}
-	for _, key := range kb.Navigation.Top {
-		handlers[key] = handleNavigationTop
-	}
-	for _, key := range kb.Navigation.Bottom {
-		handlers[key] = handleNavigationBottom
-	}
-	for _, key := range kb.Navigation.ToggleExpand {
-		handlers[key] = handleToggleExpand
-	}
-	for _, key := range kb.Navigation.SwitchContainer {
-		handlers[key] = handleSwitchContainer
-	}
-	for _, key := range kb.Navigation.SwitchVolume {
-		handlers[key] = handleSwitchVolume
-	}
-	for _, key := range kb.Navigation.SwitchImage {
-		handlers[key] = handleSwitchImage
-	}
-	for _, key := range kb.Navigation.SwitchNetwork {
-		handlers[key] = handleSwitchNetwork
-	}
+	return m.keymaps.main
+}
 
-	// Container action handlers
-	for _, key := range kb.Container.Restart {
-		handlers[key] = handleRestart
+// applyMotion moves the cursor of the current view and reports whether ev
+// was a motion. Detail views scroll their own content; the list cursor only
+// moves in the details view, so a view never shows data of another item.
+func applyMotion(m *Model, ev keys.Event) bool {
+	var cursor, top *int
+	var n, h int
+	unused := 0
+	switch m.ViewMode {
+	case ViewInspect:
+		cursor, top = &m.InspectScroll, &m.InspectTop
+		n, h = strings.Count(m.InspectData, "\n")+1, m.PaneRows()
+	case ViewEnv:
+		cursor, top, h = &m.EnvScroll, &m.EnvTop, m.PaneRows()
+		if c := m.SelectedContainer(); c != nil {
+			n = len(c.Env)
+		}
+	case ViewPorts:
+		cursor, top = &m.SelectedPort, &unused
+		if c := m.SelectedContainer(); c != nil {
+			n = len(c.Ports)
+		}
+		h = n
+	case ViewStats:
+		cursor, top, n, h = &unused, &unused, 1, 1
+	default:
+		cursor, top, n, h = &m.Cursor, &m.ListTop, len(m.Items), m.ListRows()
 	}
-	for _, key := range kb.Container.Delete {
-		handlers[key] = handleDelete
+	n, h = max(n, 1), max(h, 1)
+	w := motion.Window{Cursor: *cursor, Top: *top}
+	w.Scroll(n, h) // sync with what is on screen before screen-relative motions
+	if !w.Apply(ev, n, h) {
+		return false
 	}
-	for _, key := range kb.Container.Logs {
-		handlers[key] = handleLogs
-	}
-	for _, key := range kb.Container.Exec {
-		handlers[key] = handleExec
-	}
-	for _, key := range kb.Container.Ports {
-		handlers[key] = handlePorts
-	}
-	for _, key := range kb.Container.Env {
-		handlers[key] = handleEnv
-	}
-	for _, key := range kb.Container.Stats {
-		handlers[key] = handleStats
-	}
-	for _, key := range kb.Container.RefreshStats {
-		handlers[key] = handleStats
-	}
-	for _, key := range kb.Container.Inspect {
-		handlers[key] = handleInspect
-	}
-	for _, key := range kb.Container.OpenPort {
-		handlers[key] = handleOpenPort
-	}
-
-	// Command handler
-	for _, key := range kb.Commands.Enter {
-		handlers[key] = handleCommandMode
-	}
-
-	// View handlers
-	for _, key := range kb.Views.Back {
-		handlers[key] = handleBack
-	}
-
-	// General handlers
-	for _, key := range kb.General.ForceQuit {
-		handlers[key] = handleForceQuit
-	}
-
-	return handlers
+	w.Scroll(n, h)
+	*cursor, *top = w.Cursor, w.Top
+	return true
 }
 
 // Navigation handlers
-
-func handleNavigationUp(m *Model) (Model, tea.Cmd) {
-	switch m.ViewMode {
-	case ViewInspect:
-		if m.InspectScroll > 0 {
-			m.InspectScroll--
-		}
-	case ViewPorts:
-		if m.SelectedPort > 0 {
-			m.SelectedPort--
-		}
-	default:
-		if m.Cursor > 0 {
-			m.Cursor--
-		}
-	}
-	return *m, nil
-}
-
-func handleNavigationDown(m *Model) (Model, tea.Cmd) {
-	switch m.ViewMode {
-	case ViewInspect:
-		maxLines := len(strings.Split(m.InspectData, "\n"))
-		if m.InspectScroll < maxLines-1 {
-			m.InspectScroll++
-		}
-	case ViewPorts:
-		if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-			if m.SelectedPort < len(m.Items[m.Cursor].Container.Ports)-1 {
-				m.SelectedPort++
-			}
-		}
-	default:
-		if m.Cursor < len(m.Items)-1 {
-			m.Cursor++
-		}
-	}
-	return *m, nil
-}
-
-func handleNavigationTop(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewInspect {
-		m.InspectScroll = 0
-	} else {
-		m.Cursor = 0
-	}
-	return *m, nil
-}
-
-func handleNavigationBottom(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewInspect {
-		m.InspectScroll = len(strings.Split(m.InspectData, "\n")) - 1
-	} else {
-		m.Cursor = len(m.Items) - 1
-	}
-	return *m, nil
-}
 
 func handleToggleExpand(m *Model) (Model, tea.Cmd) {
 	if m.ViewMode == ViewDetails && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsProject {
@@ -165,77 +114,106 @@ func handleToggleExpand(m *Model) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-func handleSwitchContainer(m *Model) (Model, tea.Cmd) {
-	if m.NavMode != NavContainers {
-		m.NavMode = NavContainers
-		m.ViewMode = ViewDetails
-		m.Cursor = 0
-		RebuildItemsFunc(m)
+// switchNav shows another resource list and reloads it in the background.
+func switchNav(m *Model, mode NavigationMode) (Model, tea.Cmd) {
+	if m.NavMode == mode && m.ViewMode == ViewDetails {
+		return *m, nil
 	}
-	return *m, nil
+	if m.NavMode != mode {
+		m.Cursor, m.ListTop = 0, 0
+	}
+	m.NavMode = mode
+	m.ViewMode = ViewDetails
+	rebuildItems(m, "")
+	return *m, refreshCurrent(m)
 }
 
-func handleSwitchVolume(m *Model) (Model, tea.Cmd) {
-	if m.NavMode != NavVolumes {
-		m.NavMode = NavVolumes
-		m.ViewMode = ViewDetails
-		m.Cursor = 0
-		RebuildVolumeItemsFunc(m)
-	}
-	return *m, nil
-}
-
-func handleSwitchImage(m *Model) (Model, tea.Cmd) {
-	if m.NavMode != NavImages {
-		m.NavMode = NavImages
-		m.ViewMode = ViewDetails
-		m.Cursor = 0
-		RebuildImageItemsFunc(m)
-	}
-	return *m, nil
-}
-
-func handleSwitchNetwork(m *Model) (Model, tea.Cmd) {
-	if m.NavMode != NavNetworks {
-		m.NavMode = NavNetworks
-		m.ViewMode = ViewDetails
-		m.Cursor = 0
-		RebuildNetworkItemsFunc(m)
-	}
-	return *m, nil
-}
+func handleSwitchContainer(m *Model) (Model, tea.Cmd) { return switchNav(m, NavContainers) }
+func handleSwitchVolume(m *Model) (Model, tea.Cmd)    { return switchNav(m, NavVolumes) }
+func handleSwitchImage(m *Model) (Model, tea.Cmd)     { return switchNav(m, NavImages) }
+func handleSwitchNetwork(m *Model) (Model, tea.Cmd)   { return switchNav(m, NavNetworks) }
 
 // Container action handlers
 
+// requireContainer returns the selected container, or sets a hint when the
+// cursor is on something else (and, with running set, when it is stopped).
+func requireContainer(m *Model, running bool) *Container {
+	c := m.SelectedContainer()
+	switch {
+	case c == nil:
+		m.StatusMessage = "Select a container first"
+		return nil
+	case running && c.State != "running":
+		m.StatusMessage = c.Name + " is not running (:s to start)"
+		return nil
+	}
+	return c
+}
+
 func handleRestart(m *Model) (Model, tea.Cmd) {
+	c := requireContainer(m, false)
+	if c == nil {
+		return *m, nil
+	}
+	m.StatusMessage = "Restarting " + c.Name + "..."
 	return *m, RestartContainerFunc(m)
 }
 
+// handleDelete asks for confirmation; the command is built now so it keeps
+// targeting this item even if the list changes while the prompt is open.
 func handleDelete(m *Model) (Model, tea.Cmd) {
-	switch m.NavMode {
-	case NavContainers:
-		return *m, DeleteContainerFunc(m)
-	case NavVolumes:
-		return *m, DeleteVolumeFunc(m)
-	case NavImages:
-		return *m, DeleteImageFunc(m)
+	item, ok := m.SelectedItem()
+	if !ok {
+		return *m, nil
+	}
+	var cmd tea.Cmd
+	var what string
+	switch {
+	case item.IsContainer:
+		what = "container " + item.Container.Name
+		if item.Container.State == "running" {
+			what = "RUNNING " + what
+		}
+		cmd = DeleteContainerFunc(m)
+	case item.IsVolume:
+		what = "volume " + item.Volume.Name
+		cmd = DeleteVolumeFunc(m)
+	case item.IsImage:
+		what = "image " + item.Image.ID
+		if len(item.Image.RepoTags) > 0 {
+			what = "image " + item.Image.RepoTags[0]
+		}
+		cmd = DeleteImageFunc(m)
+	default:
+		m.StatusMessage = "Nothing to delete here"
+		return *m, nil
+	}
+	if cmd != nil {
+		m.Confirm = &Confirm{Prompt: "Delete " + what + "?", Cmd: cmd}
+		m.StatusMessage = ""
 	}
 	return *m, nil
 }
 
 func handleLogs(m *Model) (Model, tea.Cmd) {
+	c := requireContainer(m, false)
+	if c == nil {
+		return *m, nil
+	}
+	m.ViewMode = ViewLogs
+	m.LogViewer.SetLoading(c.Name)
 	return *m, LoadLogsFunc(m)
 }
 
 func handleExec(m *Model) (Model, tea.Cmd) {
-	if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-		return *m, ExecShellFunc(m)
+	if requireContainer(m, true) == nil {
+		return *m, nil
 	}
-	return *m, nil
+	return *m, ExecShellFunc(m)
 }
 
 func handlePorts(m *Model) (Model, tea.Cmd) {
-	if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+	if requireContainer(m, false) != nil {
 		m.ViewMode = ViewPorts
 		m.SelectedPort = 0
 	}
@@ -243,9 +221,10 @@ func handlePorts(m *Model) (Model, tea.Cmd) {
 }
 
 func handleEnv(m *Model) (Model, tea.Cmd) {
-	if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
+	if c := requireContainer(m, false); c != nil {
 		m.ViewMode = ViewEnv
-		if !m.Items[m.Cursor].Container.EnvLoaded && LoadEnvFunc != nil {
+		m.EnvScroll, m.EnvTop = 0, 0
+		if !c.EnvLoaded && LoadEnvFunc != nil {
 			m.StatusMessage = "Loading environment variables..."
 			return *m, LoadEnvFunc(m)
 		}
@@ -253,20 +232,27 @@ func handleEnv(m *Model) (Model, tea.Cmd) {
 	return *m, nil
 }
 
+// handleStats opens the stats view (or restarts its refresh loop).
 func handleStats(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewStats {
-		return *m, LoadStatsFunc(m)
-	} else if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-		return *m, LoadStatsFunc(m)
+	if requireContainer(m, true) == nil {
+		return *m, nil
 	}
-	return *m, nil
+	if m.ViewMode != ViewStats {
+		m.Stats = nil
+	}
+	m.ViewMode = ViewStats
+	m.StatsSeq++
+	return *m, LoadStatsFunc(m)
 }
 
 func handleInspect(m *Model) (Model, tea.Cmd) {
-	if m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-		return *m, LoadInspectFunc(m)
+	if requireContainer(m, false) == nil {
+		return *m, nil
 	}
-	return *m, nil
+	m.ViewMode = ViewInspect
+	m.InspectData = ""
+	m.InspectScroll, m.InspectTop = 0, 0
+	return *m, LoadInspectFunc(m)
 }
 
 func handleOpenPort(m *Model) (Model, tea.Cmd) {
@@ -281,22 +267,27 @@ func handleOpenPort(m *Model) (Model, tea.Cmd) {
 func handleCommandMode(m *Model) (Model, tea.Cmd) {
 	m.CommandMode = true
 	m.CommandInput = ""
+	m.CmdLine.Open(nil)
+	m.StatusMessage = ""
+	return *m, nil
+}
+
+func handleHelp(m *Model) (Model, tea.Cmd) {
+	m.HelpMode = true
+	m.HelpScroll = 0
 	m.StatusMessage = ""
 	return *m, nil
 }
 
 func handleBack(m *Model) (Model, tea.Cmd) {
-	if m.HelpMode {
-		m.HelpMode = false
-		m.StatusMessage = ""
-	} else if m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
+	if m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
 		m.ViewMode = ViewDetails
 		m.SelectedPort = 0
 		m.Stats = nil
 		m.InspectData = ""
 		m.InspectScroll = 0
-		m.StatusMessage = ""
 	}
+	m.StatusMessage = ""
 	return *m, nil
 }
 
@@ -309,20 +300,31 @@ func handleForceQuit(m *Model) (Model, tea.Cmd) {
 
 // Command handlers
 
-type CommandHandler func(*Model) tea.Cmd
+// Commands are the ":" ex-commands. Lookup, aliases, unique prefixes (:hel)
+// and completion come from vimkit/cmdline.
+var Commands cmdline.Set[*Model, tea.Cmd]
 
-func buildCommandHandlerMap() map[string]CommandHandler {
-	return map[string]CommandHandler{
-		"q":     cmdQuit,
-		"quit":  cmdQuit,
-		"s":     cmdStart,
-		"start": cmdStart,
-		"S":     cmdStop,
-		"stop":  cmdStop,
-		"noh":   cmdNoHighlight,
-		"help":  cmdHelp,
-		"h":     cmdHelp,
+func init() {
+	noArg := func(fn func(*Model) tea.Cmd) func(*Model, string) tea.Cmd {
+		return func(m *Model, _ string) tea.Cmd { return fn(m) }
 	}
+	Commands = cmdline.Set[*Model, tea.Cmd]{
+		{Name: "start", Aliases: []string{"s"}, Desc: "start selected container", Run: noArg(cmdStart)},
+		{Name: "stop", Aliases: []string{"S"}, Desc: "stop selected container", Run: noArg(cmdStop)},
+		{Name: "ssh", Args: "<alias|host|local>", Desc: "connect to Docker on another host",
+			Complete: completeSSHHosts,
+			Run:      func(m *Model, arg string) tea.Cmd { return cmdSSH(m, strings.Fields(arg)) }},
+		{Name: "nohlsearch", Aliases: []string{"noh"}, Desc: "clear log search", Run: noArg(cmdNoHighlight)},
+		{Name: "help", Aliases: []string{"h"}, Desc: "key and command reference", Run: noArg(cmdHelp)},
+		{Name: "quit", Aliases: []string{"q", "q!", "qa", "x"}, Desc: "quit", Run: noArg(cmdQuit)},
+	}
+}
+
+// completeSSHHosts offers "local", configured aliases and ~/.ssh/config hosts.
+func completeSSHHosts(m *Model, arg string) []cmdline.Item {
+	hosts := getSSHCompletionCandidates(m)
+	sort.Strings(hosts)
+	return cmdline.MatchStrings(hosts, arg)
 }
 
 func cmdQuit(m *Model) tea.Cmd {
@@ -331,12 +333,20 @@ func cmdQuit(m *Model) tea.Cmd {
 }
 
 func cmdStart(m *Model) tea.Cmd {
-	m.StatusMessage = "Starting container..."
+	c := requireContainer(m, false)
+	if c == nil {
+		return nil
+	}
+	m.StatusMessage = "Starting " + c.Name + "..."
 	return StartContainerFunc(m)
 }
 
 func cmdStop(m *Model) tea.Cmd {
-	m.StatusMessage = "Stopping container..."
+	c := requireContainer(m, false)
+	if c == nil {
+		return nil
+	}
+	m.StatusMessage = "Stopping " + c.Name + "..."
 	return StopContainerFunc(m)
 }
 
@@ -349,8 +359,7 @@ func cmdNoHighlight(m *Model) tea.Cmd {
 }
 
 func cmdHelp(m *Model) tea.Cmd {
-	m.HelpMode = true
-	m.StatusMessage = ""
+	handleHelp(m)
 	return nil
 }
 

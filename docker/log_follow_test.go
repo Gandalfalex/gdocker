@@ -8,7 +8,7 @@ import (
 
 	"gdocker/models"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/moby/moby/client"
 )
 

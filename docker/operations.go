@@ -10,6 +10,7 @@ import (
 	"gdocker/ui/logviewer"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -17,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/docker/cli/cli/connhelper"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -31,6 +32,9 @@ func init() {
 	models.RebuildImageItemsFunc = RebuildImageItems
 	models.RebuildNetworkItemsFunc = RebuildNetworkItems
 	models.RefreshContainersFunc = RefreshContainers
+	models.RefreshVolumesFunc = RefreshVolumes
+	models.RefreshImagesFunc = RefreshImages
+	models.RefreshNetworksFunc = RefreshNetworks
 	models.LoadEnvFunc = LoadEnv
 	models.ConnectDockerHostFunc = ConnectDockerHost
 	models.StartContainerFunc = StartContainer
@@ -87,6 +91,41 @@ func RefreshContainers(m *models.Model) tea.Cmd {
 			Containers: containers,
 			Recreated:  recreated,
 		}
+	}
+}
+
+// RefreshVolumes, RefreshImages and RefreshNetworks reload a resource list in
+// the background. Errors are dropped: the next refresh will retry.
+func RefreshVolumes(m *models.Model) tea.Cmd {
+	cli := m.DockerClient
+	return func() tea.Msg {
+		volumes, err := listVolumes(cli)
+		if err != nil {
+			return nil
+		}
+		return models.VolumesLoadedMsg{Volumes: volumes}
+	}
+}
+
+func RefreshImages(m *models.Model) tea.Cmd {
+	cli := m.DockerClient
+	return func() tea.Msg {
+		images, err := listImages(cli)
+		if err != nil {
+			return nil
+		}
+		return models.ImagesLoadedMsg{Images: images}
+	}
+}
+
+func RefreshNetworks(m *models.Model) tea.Cmd {
+	cli := m.DockerClient
+	return func() tea.Msg {
+		networks, err := listNetworks(cli)
+		if err != nil {
+			return nil
+		}
+		return models.NetworksLoadedMsg{Networks: networks}
 	}
 }
 
@@ -275,7 +314,7 @@ func LoadLogs(m *models.Model) tea.Cmd {
 			Timestamps: true,
 		})
 		if err != nil {
-			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to load logs: %v", err), Success: false}
+			return models.LogsFailedMsg{Err: err}
 		}
 		defer reader.Close()
 
@@ -422,29 +461,19 @@ func ExecShell(m *models.Model) tea.Cmd {
 	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
 	containerName := m.Items[m.Cursor].Container.Name
 
-	// Try different shells in order of preference
-	shells := []string{"/bin/bash", "/bin/sh", "/bin/ash"}
-
-	var selectedShell string
-	for _, shell := range shells {
-		// Test if shell exists
-		testCmd := exec.Command("docker", "exec", containerID, "test", "-f", shell)
-		if err := testCmd.Run(); err == nil {
-			selectedShell = shell
-			break
-		}
+	// Let the container pick its best shell; probing from here would block
+	// the UI with one docker call per candidate.
+	const pickShell = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
+	cmd := exec.Command("docker", "exec", "-it", containerID, "sh", "-c", pickShell)
+	if m.DockerHost != "" {
+		// Target the host gdocker is connected to, not the CLI default.
+		cmd.Env = append(os.Environ(), "DOCKER_HOST="+m.DockerHost)
 	}
-
-	if selectedShell == "" {
-		selectedShell = "/bin/sh" // Fallback
-	}
-
-	cmd := exec.Command("docker", "exec", "-it", containerID, selectedShell)
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
 			return models.ActionResultMsg{
-				Message: fmt.Sprintf("Failed to exec into %s: %v", containerName, err),
+				Message: fmt.Sprintf("Shell in %s ended with: %v", containerName, err),
 				Success: false,
 			}
 		}
@@ -513,9 +542,9 @@ func OpenPortInBrowser(m *models.Model) tea.Cmd {
 
 func InitialModel() (models.Model, error) {
 	// Load app config
-	appConfig, err := config.Load()
-	if err != nil {
-		// If config loading fails, use defaults.
+	appConfig, configErr := config.Load()
+	if configErr != nil {
+		// If config loading fails, use defaults (and say so below).
 		appConfig = config.DefaultAppConfig()
 	}
 
@@ -536,6 +565,11 @@ func InitialModel() (models.Model, error) {
 		AutoRefreshSecs: appConfig.Docker.AutoRefreshSeconds,
 		LogTailLines:    appConfig.Docker.LogTailLines,
 		LogViewer:       logviewer.New(&appConfig.KeyBindings.Logs, appConfig.UI.ShowLineNumbers, appConfig.UI.WrapLogs, ui.CopyToClipboard),
+	}
+
+	if configErr != nil {
+		m.StatusMessage = fmt.Sprintf("Config ignored, using defaults: %v", configErr)
+		m.StatusError = true
 	}
 
 	// Load initial data
@@ -643,6 +677,7 @@ func LoadStats(m *models.Model) tea.Cmd {
 	}
 
 	containerID := containerRuntimeID(m.Items[m.Cursor].Container)
+	seq := m.StatsSeq
 
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -703,6 +738,7 @@ func LoadStats(m *models.Model) tea.Cmd {
 		pids := fmt.Sprintf("%d", v.PidsStats.Current)
 
 		return models.StatsLoadedMsg{
+			Seq: seq,
 			Stats: &models.ContainerStats{
 				CPUPerc:     fmt.Sprintf("%.2f%%", cpuPercent),
 				MemUsage:    fmt.Sprintf("%s / %s", memUsageStr, memLimitStr),
@@ -774,33 +810,11 @@ func DeleteVolume(m *models.Model) tea.Cmd {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to delete: %v", err), Success: false}
 		}
 
-		// Reload volumes
-		volumeList, err := m.DockerClient.VolumeList(context.Background(), client.VolumeListOptions{})
+		volumes, err := listVolumes(m.DockerClient)
 		if err != nil {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to reload volumes: %v", err), Success: false}
 		}
-
-		var volumes []models.Volume
-		for _, v := range volumeList.Items {
-			// Parse the CreatedAt timestamp
-			created := time.Now()
-			if v.CreatedAt != "" {
-				if t, err := time.Parse(time.RFC3339Nano, v.CreatedAt); err == nil {
-					created = t
-				}
-			}
-
-			volumes = append(volumes, models.Volume{
-				Name:       v.Name,
-				Driver:     v.Driver,
-				Mountpoint: v.Mountpoint,
-				Created:    created,
-				Labels:     v.Labels,
-				Scope:      v.Scope,
-			})
-		}
-
-		return models.VolumesLoadedMsg{Volumes: volumes}
+		return models.VolumesLoadedMsg{Volumes: volumes, Status: "Volume " + volumeName + " deleted"}
 	}
 }
 
@@ -817,23 +831,11 @@ func DeleteImage(m *models.Model) tea.Cmd {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to delete: %v", err), Success: false}
 		}
 
-		// Reload images
-		imageList, err := m.DockerClient.ImageList(context.Background(), client.ImageListOptions{All: true})
+		images, err := listImages(m.DockerClient)
 		if err != nil {
 			return models.ActionResultMsg{Message: fmt.Sprintf("Failed to reload images: %v", err), Success: false}
 		}
-
-		var images []models.Image
-		for _, img := range imageList.Items {
-			images = append(images, models.Image{
-				ID:       img.ID[7:19], // Short ID (remove "sha256:" prefix and truncate)
-				RepoTags: img.RepoTags,
-				Size:     img.Size,
-				Created:  time.Unix(img.Created, 0),
-			})
-		}
-
-		return models.ImagesLoadedMsg{Images: images}
+		return models.ImagesLoadedMsg{Images: images, Status: "Image " + imageID + " deleted"}
 	}
 }
 

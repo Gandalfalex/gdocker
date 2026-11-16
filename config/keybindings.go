@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Gandalfalex/vim-kit/keys"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,6 +72,7 @@ type CommandKeys struct {
 
 type GeneralKeys struct {
 	ForceQuit []string `yaml:"force_quit"`
+	Help      []string `yaml:"help"`
 }
 
 // UIConfig holds UX display preferences.
@@ -107,9 +109,9 @@ func Default() *KeyBindings {
 		Navigation: NavigationKeys{
 			Up:              []string{"k", "up"},
 			Down:            []string{"j", "down"},
-			Top:             []string{"g"},
-			Bottom:          []string{"G"},
-			ToggleExpand:    []string{" ", "enter"},
+			Top:             []string{"gg", "home"},
+			Bottom:          []string{"G", "end"},
+			ToggleExpand:    []string{"space", "enter"},
 			SwitchContainer: []string{"1"},
 			SwitchVolume:    []string{"2"},
 			SwitchImage:     []string{"3"},
@@ -131,7 +133,7 @@ func Default() *KeyBindings {
 			Back: []string{"esc"},
 		},
 		Logs: LogKeys{
-			Search:     []string{"?"},
+			Search:     []string{"/", "?"},
 			NextResult: []string{"n"},
 			PrevResult: []string{"N"},
 			Follow:     []string{"f"},
@@ -145,6 +147,7 @@ func Default() *KeyBindings {
 		},
 		General: GeneralKeys{
 			ForceQuit: []string{"ctrl+c"},
+			Help:      []string{"?"},
 		},
 	}
 }
@@ -183,6 +186,8 @@ func DefaultDocker() *DockerConfig {
 
 // sanitize applies value bounds for numeric UI options.
 func (c *AppConfig) sanitize() {
+	// Accept spellings from older configs (" " for space, "Ctrl+C", ...).
+	keys.NormalizeStruct(&c.KeyBindings)
 	if c.UI.MaxProjectPreviewItems < 1 {
 		c.UI.MaxProjectPreviewItems = 1
 	}
@@ -242,6 +247,9 @@ func Load() (*AppConfig, error) {
 		return DefaultAppConfig(), err
 	}
 	cfg.sanitize()
+	if err := cfg.KeyBindings.Validate(); err != nil {
+		return DefaultAppConfig(), err
+	}
 	return cfg, nil
 }
 

@@ -7,7 +7,7 @@ keybindings:
     down: ["j", "down"]          # Move cursor down
     top: ["g"]                   # Jump to top
     bottom: ["G"]                # Jump to bottom
-    toggle_expand: [" ", "enter"] # Toggle project expansion
+    toggle_expand: ["space", "enter"] # Toggle project expansion
     switch_container: ["1"]      # Switch to containers view
     switch_volume: ["2"]         # Switch to volumes view
     switch_image: ["3"]          # Switch to images view
@@ -29,7 +29,7 @@ keybindings:
     back: ["esc"]                # Go back / close view
 
   logs:
-    search: ["?"]                # Start search
+    search: ["/", "?"]           # Start search
     next_result: ["n"]           # Next search result
     prev_result: ["N"]           # Previous search result
     follow: ["f"]                # Toggle log following in logs view
@@ -39,6 +39,7 @@ keybindings:
 
   general:
     force_quit: ["ctrl+c"]       # Force quit application
+    help: ["?"]                  # Open help
 
 ui:
   show_header_context: true      # Show [resource • view] in header

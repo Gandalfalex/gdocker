@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"gdocker/models"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,14 +107,23 @@ func GroupByProject(containers []models.Container) ([]models.Container, []models
 		}
 	}
 
+	// Map iteration order is random; sort so the list does not reshuffle
+	// on every refresh.
+	byName := func(cs []models.Container) {
+		sort.SliceStable(cs, func(i, j int) bool { return cs[i].Name < cs[j].Name })
+	}
+	byName(standalone)
+
 	var projects []models.ComposeGroup
 	for name, containers := range projectMap {
+		byName(containers)
 		projects = append(projects, models.ComposeGroup{
 			Name:       name,
 			Containers: containers,
 			Expanded:   false,
 		})
 	}
+	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
 
 	return standalone, projects
 }
@@ -158,9 +168,18 @@ func RebuildItems(m *models.Model) {
 }
 
 func LoadVolumes(m *models.Model) error {
-	volumeList, err := m.DockerClient.VolumeList(context.Background(), client.VolumeListOptions{})
+	volumes, err := listVolumes(m.DockerClient)
 	if err != nil {
 		return err
+	}
+	m.Volumes = volumes
+	return nil
+}
+
+func listVolumes(cli *client.Client) ([]models.Volume, error) {
+	volumeList, err := cli.VolumeList(context.Background(), client.VolumeListOptions{})
+	if err != nil {
+		return nil, err
 	}
 
 	var volumes []models.Volume
@@ -182,29 +201,35 @@ func LoadVolumes(m *models.Model) error {
 			Scope:      v.Scope,
 		})
 	}
-
-	m.Volumes = volumes
-	return nil
+	sort.Slice(volumes, func(i, j int) bool { return volumes[i].Name < volumes[j].Name })
+	return volumes, nil
 }
 
 func LoadImages(m *models.Model) error {
-	imageList, err := m.DockerClient.ImageList(context.Background(), client.ImageListOptions{All: true})
+	images, err := listImages(m.DockerClient)
 	if err != nil {
 		return err
+	}
+	m.Images = images
+	return nil
+}
+
+func listImages(cli *client.Client) ([]models.Image, error) {
+	imageList, err := cli.ImageList(context.Background(), client.ImageListOptions{All: true})
+	if err != nil {
+		return nil, err
 	}
 
 	var images []models.Image
 	for _, img := range imageList.Items {
 		images = append(images, models.Image{
-			ID:       img.ID[7:19], // Short ID (remove "sha256:" prefix and truncate)
+			ID:       shortID(strings.TrimPrefix(img.ID, "sha256:")),
 			RepoTags: img.RepoTags,
 			Size:     img.Size,
 			Created:  time.Unix(img.Created, 0),
 		})
 	}
-
-	m.Images = images
-	return nil
+	return images, nil
 }
 
 func RebuildVolumeItems(m *models.Model) {
@@ -248,15 +273,24 @@ func RebuildImageItems(m *models.Model) {
 }
 
 func LoadNetworks(m *models.Model) error {
-	networkList, err := m.DockerClient.NetworkList(context.Background(), client.NetworkListOptions{})
+	networks, err := listNetworks(m.DockerClient)
 	if err != nil {
 		return err
+	}
+	m.Networks = networks
+	return nil
+}
+
+func listNetworks(cli *client.Client) ([]models.Network, error) {
+	networkList, err := cli.NetworkList(context.Background(), client.NetworkListOptions{})
+	if err != nil {
+		return nil, err
 	}
 
 	var networks []models.Network
 	for _, n := range networkList.Items {
 		networks = append(networks, models.Network{
-			ID:       n.ID[:12], // Short ID
+			ID:       shortID(n.ID),
 			Name:     n.Name,
 			Driver:   n.Driver,
 			Scope:    n.Scope,
@@ -265,9 +299,8 @@ func LoadNetworks(m *models.Model) error {
 			Labels:   n.Labels,
 		})
 	}
-
-	m.Networks = networks
-	return nil
+	sort.Slice(networks, func(i, j int) bool { return networks[i].Name < networks[j].Name })
+	return networks, nil
 }
 
 func RebuildNetworkItems(m *models.Model) {

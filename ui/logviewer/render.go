@@ -2,23 +2,35 @@ package logviewer
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
+	"unicode"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Colors duplicated from ui/icons.go to avoid import cycle.
 const (
-	colorMuted             = "#858585"
-	colorTitle             = "#0e639c"
-	colorHighlight         = "#094771"
-	colorLogFG             = "#d4d4d4"
-	colorSearchHighlightFG = "#000000"
-	colorSearchHighlightBG = "#ffff00"
-	colorVisualSelectionBG = "#264f78"
-	colorCursorBG          = "#c6c6c6"
-	colorCursorFG          = "#000000"
+	colorMuted             = "#565f89"
+	colorTitle             = "#7aa2f7"
+	colorHighlight         = "#283457"
+	colorLogFG             = "#c0caf5"
+	colorSearchHighlightFG = "#1a1b26"
+	colorSearchHighlightBG = "#e0af68"
+	colorVisualSelectionBG = "#3d59a1"
+	colorCursorBG          = "#c0caf5"
+	colorCursorFG          = "#1a1b26"
 )
+
+// How a single character of a log line is drawn.
+const (
+	spanPlain uint8 = iota
+	spanMatch
+	spanSelected
+	spanCursor
+)
+
+var mutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted))
 
 // View renders the log viewer pane.
 func (m *Model) View(width, height int) string {
@@ -38,338 +50,192 @@ func (m *Model) View(width, height int) string {
 		wrapLabel = "nowrap"
 	}
 
-	subtitle := fmt.Sprintf("%s • %d lines • %s • %s", containerName, len(m.Lines), mode, wrapLabel)
-	switch m.VisualType {
+	subtitle := fmt.Sprintf("%s · %d lines · %s · %s", containerName, len(m.Lines), mode, wrapLabel)
+	if m.SearchQuery != "" && !m.SearchMode {
+		subtitle += fmt.Sprintf(" · /%s (%d matches)", m.SearchQuery, len(m.SearchResults))
+	}
+	switch m.Sel.Mode {
 	case VisualLine:
-		subtitle = "-- VISUAL LINE -- • " + subtitle
+		subtitle = "-- VISUAL LINE -- · " + subtitle
 	case VisualChar:
-		subtitle = "-- VISUAL -- • " + subtitle
+		subtitle = "-- VISUAL -- · " + subtitle
 	}
 	s.WriteString(renderPaneHeader("Logs", subtitle))
 
+	if m.Loading {
+		s.WriteString(mutedStyle.Render("Loading logs..."))
+		return s.String()
+	}
 	if len(m.Lines) == 0 {
-		s.WriteString("No logs available")
+		s.WriteString(mutedStyle.Render("No logs yet"))
 		return s.String()
 	}
 
-	if m.SearchQuery != "" && !m.SearchMode {
-		searchStatus := fmt.Sprintf("Search: %q (%d matches)", m.SearchQuery, len(m.SearchResults))
-		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted)).Render(searchStatus) + "\n\n")
-	}
+	m.SetSize(width, height)
+	lineWidth, rows := m.lineWidth(), m.visibleRows()
 
-	// Calculate max line width
-	gutterWidth := 0
-	if m.ShowLineNumbers {
-		gutterWidth = 5
-	}
-	maxLineWidth := width - 4 - gutterWidth
-	if maxLineWidth < 12 {
-		maxLineWidth = 12
-	}
+	scrollPos := min(max(m.ScrollPos, 0), len(m.Lines)-1)
 
-	maxVisibleRows := max(height-7, 1)
-
-	scrollPos := m.ScrollPos
-	if scrollPos >= len(m.Lines) {
-		scrollPos = len(m.Lines) - 1
-	}
-	if scrollPos < 0 {
-		scrollPos = 0
-	}
-
-	// Search result lookup
-	searchResultMap := make(map[int]bool)
-	for _, idx := range m.SearchResults {
-		searchResultMap[idx] = true
-	}
-
-	// Visual selection range
-	visualLineStart, visualLineEnd := -1, -1
-	if m.VisualType == VisualLine {
-		visualLineStart, visualLineEnd = m.lineSelectionRange()
-	}
-
-	// Char visual range
-	charSL, charSC, charEL, charEC := -1, -1, -1, -1
-	if m.VisualType == VisualChar {
-		charSL, charSC, charEL, charEC = m.charSelectionRange()
-	}
-
+	var start, end int
 	if m.WrapLogs {
-		s.WriteString(m.renderWrapped(maxLineWidth, maxVisibleRows, scrollPos, searchResultMap, visualLineStart, visualLineEnd, charSL, charSC, charEL, charEC))
+		start, end = m.renderWrapped(&s, lineWidth, rows, scrollPos)
 	} else {
-		s.WriteString(m.renderTruncated(maxLineWidth, maxVisibleRows, scrollPos, searchResultMap, visualLineStart, visualLineEnd, charSL, charSC, charEL, charEC))
-	}
-
-	return s.String()
-}
-
-func (m *Model) renderWrapped(maxLineWidth, maxVisibleRows, scrollPos int, searchResultMap map[int]bool, vlStart, vlEnd, cSL, cSC, cEL, cEC int) string {
-	var s strings.Builder
-
-	type renderedLine struct {
-		logIdx int
-		rows   []string
-	}
-
-	// Render downward from scrollPos
-	var downLines []renderedLine
-	downRows := 0
-	for i := scrollPos; i < len(m.Lines) && downRows < maxVisibleRows; i++ {
-		wrapped := wrapLine(m.Lines[i], maxLineWidth)
-		downLines = append(downLines, renderedLine{logIdx: i, rows: wrapped})
-		downRows += len(wrapped)
-	}
-
-	// Fill remaining rows upward
-	remainingRows := maxVisibleRows - downRows
-	var upLines []renderedLine
-	for i := scrollPos - 1; i >= 0 && remainingRows > 0; i-- {
-		wrapped := wrapLine(m.Lines[i], maxLineWidth)
-		upLines = append(upLines, renderedLine{logIdx: i, rows: wrapped})
-		remainingRows -= len(wrapped)
-	}
-
-	// Combine
-	allLines := make([]renderedLine, 0, len(upLines)+len(downLines))
-	for i := len(upLines) - 1; i >= 0; i-- {
-		allLines = append(allLines, upLines[i])
-	}
-	allLines = append(allLines, downLines...)
-
-	rowsWritten := 0
-	startIdx, endIdx := -1, -1
-	for _, rl := range allLines {
-		if rowsWritten >= maxVisibleRows {
-			break
-		}
-		if startIdx == -1 {
-			startIdx = rl.logIdx
-		}
-		endIdx = rl.logIdx
-
-		isCurrentLine := rl.logIdx == scrollPos
-		isSearchMatch := m.SearchQuery != "" && searchResultMap[rl.logIdx]
-		isLineSelected := vlStart != -1 && rl.logIdx >= vlStart && rl.logIdx <= vlEnd
-
-		for j, row := range rl.rows {
-			if rowsWritten >= maxVisibleRows {
-				break
-			}
-
-			gutter := m.renderGutter(rl.logIdx, j)
-			displayRow := row
-
-			if isSearchMatch && j == 0 {
-				displayRow = highlightSearchTerm(displayRow, m.SearchQuery)
-			}
-
-			// Apply character-level highlighting if in char visual mode.
-			inCharVisualRange := m.VisualType == VisualChar && rl.logIdx >= cSL && rl.logIdx <= cEL
-			if inCharVisualRange {
-				lineRunes := []rune(m.Lines[rl.logIdx])
-				lineLen := len(lineRunes)
-				if lineLen > 0 {
-					// Selection range on this logical log line.
-					selStart := 0
-					selEnd := lineLen - 1
-					if rl.logIdx == cSL {
-						selStart = cSC
-					}
-					if rl.logIdx == cEL {
-						selEnd = cEC
-					}
-					if selStart < 0 {
-						selStart = 0
-					}
-					if selEnd >= lineLen {
-						selEnd = lineLen - 1
-					}
-
-					// Current wrapped row range inside the logical line.
-					rowStart := j * maxLineWidth
-					rowEnd := rowStart + len([]rune(row)) - 1
-
-					// Intersect line selection with this wrapped row.
-					hlStart := max(selStart, rowStart)
-					hlEnd := min(selEnd, rowEnd)
-					if hlStart <= hlEnd {
-						localStart := hlStart - rowStart
-						localEnd := hlEnd - rowStart
-						displayRow = applyCharHighlightRange(displayRow, localStart, localEnd)
-					}
-				}
-				displayRow = gutter + lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Render(displayRow)
-			} else if isLineSelected {
-				// Apply line-level styling for visual line mode
-				displayRow = lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Background(lipgloss.Color(colorVisualSelectionBG)).
-					Render(gutter + lipgloss.NewStyle().
-						Foreground(lipgloss.Color(colorLogFG)).
-						Render(displayRow))
-			} else if isCurrentLine {
-				displayRow = lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Background(lipgloss.Color(colorHighlight)).
-					Render(gutter + lipgloss.NewStyle().
-						Foreground(lipgloss.Color(colorLogFG)).
-						Render(displayRow))
-			} else {
-				displayRow = gutter + lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Render(displayRow)
-			}
-			s.WriteString(displayRow + "\n")
-			rowsWritten++
-		}
-	}
-
-	if startIdx == -1 {
-		startIdx = 0
-	}
-	if endIdx == -1 {
-		endIdx = 0
+		start, end = m.renderTruncated(&s, lineWidth, rows, scrollPos)
 	}
 
 	s.WriteString("\n")
-	progress := int(float64(scrollPos+1) / float64(len(m.Lines)) * 100)
-	indicator := fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(m.Lines), startIdx+1, endIdx+1, progress)
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted)).Render(indicator))
+	progress := (scrollPos + 1) * 100 / len(m.Lines)
+	s.WriteString(mutedStyle.Render(fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(m.Lines), start+1, end+1, progress)))
 	return s.String()
 }
 
-func (m *Model) renderTruncated(maxLineWidth, maxVisibleRows, scrollPos int, searchResultMap map[int]bool, vlStart, vlEnd, cSL, cSC, cEL, cEC int) string {
-	var s strings.Builder
-
-	start := max(scrollPos-maxVisibleRows/2, 0)
-	end := start + maxVisibleRows
-	if end > len(m.Lines) {
-		end = len(m.Lines)
-		start = max(end-maxVisibleRows, 0)
+// renderWrapped writes up to rows screen rows starting at viewTop, wrapping
+// long lines, and returns the first and last log line shown.
+func (m *Model) renderWrapped(s *strings.Builder, lineWidth, rows, scrollPos int) (int, int) {
+	start := m.viewTop()
+	written := 0
+	for i := start; i < len(m.Lines); i++ {
+		runes := []rune(m.Lines[i])
+		spans := m.lineSpans(i, runes)
+		bg := m.rowBackground(i, scrollPos)
+		for j := 0; j == 0 || j*lineWidth < len(runes); j++ {
+			if written >= rows {
+				if j == 0 {
+					i-- // line i did not make it on screen at all
+				}
+				return start, i
+			}
+			from, to := j*lineWidth, min((j+1)*lineWidth, len(runes))
+			s.WriteString(m.renderGutter(i, j, bg) + renderSpans(runes[from:to], spans[from:to], bg, lineWidth) + "\n")
+			written++
+		}
 	}
+	return start, len(m.Lines) - 1
+}
+
+// renderTruncated writes one screen row per log line, cutting long lines.
+func (m *Model) renderTruncated(s *strings.Builder, lineWidth, rows, scrollPos int) (int, int) {
+	start := m.viewTop()
+	end := min(start+rows, len(m.Lines))
 
 	for i := start; i < end; i++ {
-		line := m.Lines[i]
-		gutter := m.renderGutter(i, 0)
-
-		if len(line) > maxLineWidth {
-			line = line[:maxLineWidth-3] + "..."
+		runes := []rune(m.Lines[i])
+		spans := m.lineSpans(i, runes)
+		if len(runes) > lineWidth {
+			runes = append(runes[:lineWidth-1:lineWidth-1], '…')
+			spans = append(spans[:lineWidth-1:lineWidth-1], spanPlain)
 		}
+		bg := m.rowBackground(i, scrollPos)
+		s.WriteString(m.renderGutter(i, 0, bg) + renderSpans(runes, spans, bg, lineWidth) + "\n")
+	}
+	return start, end - 1
+}
 
-		if m.SearchQuery != "" && searchResultMap[i] {
-			line = highlightSearchTerm(line, m.SearchQuery)
+// rowBackground returns the background of a whole row: the visual line
+// selection, else the cursor line, else none.
+func (m *Model) rowBackground(line, scrollPos int) color.Color {
+	if m.Sel.Mode == VisualLine {
+		if from, to := m.lineSelectionRange(); line >= from && line <= to {
+			return lipgloss.Color(colorVisualSelectionBG)
 		}
+	}
+	if line == scrollPos && m.Sel.Mode != VisualChar {
+		return lipgloss.Color(colorHighlight)
+	}
+	return nil
+}
 
-		// Apply character-level highlighting if in char visual mode
-		inCharVisualRange := m.VisualType == VisualChar && i >= cSL && i <= cEL
-		if inCharVisualRange {
-			line = m.applyCharHighlight(line, i, cSL, cSC, cEL, cEC)
-			line = gutter + lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorLogFG)).
-				Render(line)
-		} else if vlStart != -1 && i >= vlStart && i <= vlEnd {
-			// Apply line-level styling for visual line mode
-			line = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorLogFG)).
-				Background(lipgloss.Color(colorVisualSelectionBG)).
-				Render(gutter + lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Render(line))
-		} else if i == scrollPos {
-			line = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorLogFG)).
-				Background(lipgloss.Color(colorHighlight)).
-				Render(gutter + lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorLogFG)).
-					Render(line))
-		} else {
-			line = gutter + lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorLogFG)).
-				Render(line)
+// lineSpans classifies every character of a log line: search match, part of
+// the character selection, or the cursor.
+func (m *Model) lineSpans(line int, runes []rune) []uint8 {
+	spans := make([]uint8, len(runes))
+
+	if query := []rune(strings.ToLower(m.SearchQuery)); len(query) > 0 && !m.SearchMode {
+		for i := 0; i+len(query) <= len(runes); i++ {
+			match := true
+			for k, q := range query {
+				if unicode.ToLower(runes[i+k]) != q {
+					match = false
+					break
+				}
+			}
+			if match {
+				for k := range query {
+					spans[i+k] = spanMatch
+				}
+				i += len(query) - 1
+			}
 		}
-		s.WriteString(line + "\n")
 	}
 
-	s.WriteString("\n")
-	progress := int(float64(scrollPos+1) / float64(len(m.Lines)) * 100)
-	indicator := fmt.Sprintf("Line %d/%d (%d-%d visible, %d%%)", scrollPos+1, len(m.Lines), start+1, end, progress)
-	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted)).Render(indicator))
+	if m.Sel.Mode == VisualChar && len(runes) > 0 {
+		sl, sc, el, ec := m.charSelectionRange()
+		if line >= sl && line <= el {
+			from, to := 0, len(runes)-1
+			if line == sl {
+				from = max(sc, 0)
+			}
+			if line == el {
+				to = min(ec, len(runes)-1)
+			}
+			for i := from; i <= to; i++ {
+				spans[i] = spanSelected
+			}
+		}
+		if line == m.ScrollPos {
+			spans[min(max(m.CursorCol, 0), len(runes)-1)] = spanCursor
+		}
+	}
+	return spans
+}
+
+// renderSpans draws runes with their span styles on background bg. Each run
+// is styled on its own, so a highlight never resets the colors after it, and
+// rows with a background are padded to the full width.
+func renderSpans(runes []rune, spans []uint8, bg color.Color, width int) string {
+	base := lipgloss.NewStyle().Foreground(lipgloss.Color(colorLogFG))
+	if bg != nil {
+		base = base.Background(bg)
+	}
+	style := func(span uint8) lipgloss.Style {
+		switch span {
+		case spanMatch:
+			return base.Foreground(lipgloss.Color(colorSearchHighlightFG)).Background(lipgloss.Color(colorSearchHighlightBG))
+		case spanSelected:
+			return base.Background(lipgloss.Color(colorVisualSelectionBG))
+		case spanCursor:
+			return base.Foreground(lipgloss.Color(colorCursorFG)).Background(lipgloss.Color(colorCursorBG))
+		}
+		return base
+	}
+
+	var s strings.Builder
+	for i := 0; i < len(runes); {
+		j := i
+		for j < len(runes) && spans[j] == spans[i] {
+			j++
+		}
+		s.WriteString(style(spans[i]).Render(string(runes[i:j])))
+		i = j
+	}
+	if pad := width - lipgloss.Width(string(runes)); bg != nil && pad > 0 {
+		s.WriteString(base.Render(strings.Repeat(" ", pad)))
+	}
 	return s.String()
 }
 
-func (m *Model) renderGutter(lineIdx, wrapIdx int) string {
+func (m *Model) renderGutter(lineIdx, wrapIdx int, bg color.Color) string {
 	if !m.ShowLineNumbers {
 		return ""
 	}
+	style := mutedStyle
+	if bg != nil {
+		style = style.Background(bg)
+	}
 	if wrapIdx == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorMuted)).
-			Render(fmt.Sprintf("%4d ", lineIdx+1))
+		return style.Render(fmt.Sprintf("%4d ", lineIdx+1))
 	}
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorMuted)).
-		Render("   · ")
-}
-
-// applyCharHighlight highlights the character-visual selection range within a line.
-func (m *Model) applyCharHighlight(line string, lineIdx, startLine, startCol, endLine, endCol int) string {
-	runes := []rune(line)
-	n := len(runes)
-	if n == 0 {
-		return line
-	}
-
-	// Determine the column range to highlight on this line
-	colStart := 0
-	colEnd := n - 1
-	if lineIdx == startLine {
-		colStart = startCol
-	}
-	if lineIdx == endLine {
-		colEnd = endCol
-	}
-	if colStart >= n {
-		colStart = n - 1
-	}
-	if colEnd >= n {
-		colEnd = n - 1
-	}
-	if colStart < 0 {
-		colStart = 0
-	}
-
-	return applyCharHighlightRange(line, colStart, colEnd)
-}
-
-func applyCharHighlightRange(line string, colStart, colEnd int) string {
-	runes := []rune(line)
-	n := len(runes)
-	if n == 0 {
-		return line
-	}
-	if colStart < 0 {
-		colStart = 0
-	}
-	if colEnd >= n {
-		colEnd = n - 1
-	}
-	if colStart > colEnd {
-		return line
-	}
-
-	before := string(runes[:colStart])
-	selected := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorLogFG)).
-		Background(lipgloss.Color(colorVisualSelectionBG)).
-		Render(string(runes[colStart : colEnd+1]))
-	after := ""
-	if colEnd+1 < n {
-		after = string(runes[colEnd+1:])
-	}
-	return before + selected + after
+	return style.Render("   · ")
 }
 
 func renderPaneHeader(title, subtitle string) string {
@@ -381,49 +247,31 @@ func renderPaneHeader(title, subtitle string) string {
 	if subtitle == "" {
 		return titleStyled + "\n\n"
 	}
-
-	subtitleStyled := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorMuted)).
-		Render(subtitle)
-
-	return titleStyled + "\n" + subtitleStyled + "\n\n"
+	return titleStyled + "\n" + mutedStyle.Render(subtitle) + "\n\n"
 }
 
-// wrapLine splits a string into chunks of at most maxWidth characters.
-func wrapLine(line string, maxWidth int) []string {
-	if maxWidth < 1 {
-		maxWidth = 1
-	}
-	if len(line) <= maxWidth {
-		return []string{line}
-	}
-	var parts []string
-	for len(line) > maxWidth {
-		parts = append(parts, line[:maxWidth])
-		line = line[maxWidth:]
-	}
-	if len(line) > 0 {
-		parts = append(parts, line)
-	}
-	return parts
-}
+// SearchPrompt is the search input as shown while typing a query.
+func (m *Model) SearchPrompt() string { return "/" + m.SearchQuery }
 
 // StatusBarHint returns context-appropriate key hints for the status bar.
 func (m *Model) StatusBarHint() string {
 	if m.SearchMode {
-		return "?" + m.SearchQuery + "█ • enter: search • esc: cancel"
+		return "enter search · esc cancel"
 	}
 
-	switch m.VisualType {
+	switch m.Sel.Mode {
 	case VisualLine:
-		return "j/k: extend selection • g/G: top/bottom • y: yank • V/esc: exit visual"
+		return "j/k extend · gg/G top/bottom · y yank · V/esc leave visual"
 	case VisualChar:
-		return "h/l: char • w/b/e: word • 0/$: line start/end • j/k: lines • y: yank • v/esc: exit"
+		return "h/l char · w/b/e word · 0/$ line start/end · j/k lines · y yank · v/esc leave visual"
 	}
 
-	follow := "off"
+	follow := "follow"
 	if m.FollowingLogs {
-		follow = "on"
+		follow = "pause"
 	}
-	return "j/k: scroll • g/G: top/bottom • ?: search • n/N: next/prev • f: follow(" + follow + ") • w: wrap • V: visual • v: select • esc: back"
+	return "j/k gg/G ^d/^u · / search · n/N next/prev · f " + follow + " · w wrap · V/v select · y yank · : command · esc back"
 }
+
+// Partial returns a typed-but-incomplete count or key sequence, e.g. "5g".
+func (m *Model) Partial() string { return m.keys.Partial() }

@@ -7,7 +7,7 @@ import (
 	"gdocker/config"
 	"gdocker/ui/logviewer"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestUpdateContainersRefreshedSetsRecreatedStatus(t *testing.T) {
@@ -128,7 +128,7 @@ func TestUpdateEnterCommandModeFromLogs(t *testing.T) {
 		LogViewer:   logviewer.New(&cfg.KeyBindings.Logs, true, true, nil),
 	}
 
-	gotModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	gotModel, _ := m.Update(tea.KeyPressMsg{Code: ':', Text: ":"})
 	got := gotModel.(Model)
 
 	if !got.CommandMode {
@@ -154,7 +154,7 @@ func TestUpdateStopsFollowerWhenToggledOff(t *testing.T) {
 	}
 	m.LogViewer.FollowingLogs = true
 
-	gotModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	gotModel, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	got := gotModel.(Model)
 
 	if got.LogViewer.FollowingLogs {
@@ -178,7 +178,8 @@ func TestUpdateLogsLoadedStartsFollowAndSetsContainerName(t *testing.T) {
 	since := time.Unix(1700000000, 123)
 	c := Container{Name: "api"}
 	m := Model{
-		Cursor: 0,
+		Cursor:   0,
+		ViewMode: ViewLogs, // set as soon as logs are requested
 		Items: []ListItem{
 			{IsContainer: true, Container: &c},
 		},
@@ -469,19 +470,19 @@ func TestCommandModeTabCompletesSSHAndCyclesMatches(t *testing.T) {
 		},
 	}
 
-	gotModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	gotModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := gotModel.(Model)
 	if got.CommandInput != "ssh office" {
 		t.Fatalf("expected first completion ssh office, got %q", got.CommandInput)
 	}
 
-	gotModel, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
 	if got.CommandInput != "ssh orangepi" {
 		t.Fatalf("expected second completion ssh orangepi, got %q", got.CommandInput)
 	}
 
-	gotModel, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
 	if got.CommandInput != "ssh orbit" {
 		t.Fatalf("expected third completion ssh orbit, got %q", got.CommandInput)
@@ -501,20 +502,20 @@ func TestCommandModeTabResetsCompletionAfterTyping(t *testing.T) {
 		CommandInput: "ssh o",
 	}
 
-	gotModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	gotModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := gotModel.(Model)
 	if got.CommandInput != "ssh office" {
 		t.Fatalf("expected first completion ssh office, got %q", got.CommandInput)
 	}
 
-	gotModel, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	gotModel, _ = got.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	got = gotModel.(Model)
 	if got.CommandInput != "ssh officex" {
 		t.Fatalf("expected typed suffix to append, got %q", got.CommandInput)
 	}
 
 	// Now tab should use the new prefix and not cycle old matches.
-	gotModel, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
 	if got.CommandInput != "ssh officex" {
 		t.Fatalf("expected no completion for unmatched prefix, got %q", got.CommandInput)
