@@ -1,0 +1,405 @@
+== project selected
+ gdocker  › containers › shop                              ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│▌ ▼ shop (1/2)                    ││Project     shop                                                        │
+│    ● shop-web-1                  ││Containers  2                                                           │
+│    ■ shop-db-1                   ││                                                                        │
+│  ● redis                         ││Running     1/2                                                         │
+│                                  ││                                                                        │
+│                                  ││Containers in project                                                   │
+│                                  ││  ● shop-web-1                                                          │
+│                                  ││  ■ shop-db-1                                                           │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│1/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 1/4                                                                         
+ space expand/collapse · j/k move · 1-4 switch resource · : command · ? help · :q quit
+== container details
+ gdocker  › containers › shop › shop-web-1                 ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│  ▼ shop (1/2)                    ││l logs · e shell · p ports · v env · t stats · i inspect                │
+│▌   ● shop-web-1                  ││                                                                        │
+│    ■ shop-db-1                   ││Name        shop-web-1                                                  │
+│  ● redis                         ││Status      Up 2 hours                                                  │
+│                                  ││Image       nginx:1.27                                                  │
+│                                  ││ID          0123456789ab                                                │
+│                                  ││Project     shop                                                        │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││Ports       1 mapped                                                    │
+│                                  ││  localhost:8080 -> 80/tcp                                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ l logs · e shell · p ports · v env · t stats · i inspect · r restart · d delete · :s/:S start/stop · ? help …
+== status message
+ gdocker  › containers › shop › shop-web-1                 ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│  ▼ shop (1/2)                    ││l logs · e shell · p ports · v env · t stats · i inspect                │
+│▌   ● shop-web-1                  ││                                                                        │
+│    ■ shop-db-1                   ││Name        shop-web-1                                                  │
+│  ● redis                         ││Status      Up 2 hours                                                  │
+│                                  ││Image       nginx:1.27                                                  │
+│                                  ││ID          0123456789ab                                                │
+│                                  ││Project     shop                                                        │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││Ports       1 mapped                                                    │
+│                                  ││  localhost:8080 -> 80/tcp                                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4 │ Connected to ssh://dev                                                
+ l logs · e shell · p ports · v env · t stats · i inspect · r restart · d delete · :s/:S start/stop · ? help …
+== status error
+ gdocker  › containers › shop › shop-web-1                 ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│  ▼ shop (1/2)                    ││l logs · e shell · p ports · v env · t stats · i inspect                │
+│▌   ● shop-web-1                  ││                                                                        │
+│    ■ shop-db-1                   ││Name        shop-web-1                                                  │
+│  ● redis                         ││Status      Up 2 hours                                                  │
+│                                  ││Image       nginx:1.27                                                  │
+│                                  ││ID          0123456789ab                                                │
+│                                  ││Project     shop                                                        │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││Ports       1 mapped                                                    │
+│                                  ││  localhost:8080 -> 80/tcp                                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4 │ Failed to load logs: boom                                             
+ l logs · e shell · p ports · v env · t stats · i inspect · r restart · d delete · :s/:S start/stop · ? help …
+== ports
+ gdocker  › containers › shop › shop-web-1 › ports         ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Port Mappings                                                           │
+│                                  ││shop-web-1 · 1 published                                                │
+│  ▼ shop (1/2)                    ││                                                                        │
+│▌   ● shop-web-1                  ││> localhost:8080 -> 80/tcp                                              │
+│    ■ shop-db-1                   ││  → http://localhost:8080                                               │
+│  ● redis                         ││                                                                        │
+│                                  ││Press 'o' or 'enter' to open in browser                                 │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ j/k select port · o/enter open in browser · esc back · ? help
+== env
+ gdocker  › containers › shop › shop-web-1 › env           ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Environment Variables                                                   │
+│                                  ││shop-web-1 · 2 vars                                                     │
+│  ▼ shop (1/2)                    ││                                                                        │
+│▌   ● shop-web-1                  ││PATH=/usr/bin                                                           │
+│    ■ shop-db-1                   ││NGINX_VERSION=1.27                                                      │
+│  ● redis                         ││                                                                        │
+│                                  ││Variable 1/2                                                            │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ j/k gg/G ^d/^u scroll · esc back · : command · ? help
+== stats
+ gdocker  › containers › shop › shop-web-1 › stats         ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Container Stats                                                         │
+│                                  ││shop-web-1                                                              │
+│  ▼ shop (1/2)                    ││                                                                        │
+│▌   ● shop-web-1                  ││Runtime                                                                 │
+│    ■ shop-db-1                   ││  CPU       1.5%                                                        │
+│  ● redis                         ││  PIDs      3                                                           │
+│                                  ││                                                                        │
+│                                  ││Memory                                                                  │
+│                                  ││  Usage     20MiB / 1GiB                                                │
+│                                  ││  Percent   2%                                                          │
+│                                  ││                                                                        │
+│                                  ││I/O                                                                     │
+│                                  ││  Network   1kB / 2kB                                                   │
+│                                  ││  rx/tx                                                                 │
+│                                  ││  Block     0B / 0B                                                     │
+│                                  ││  read/write                                                            │
+│                                  ││                                                                        │
+│                                  ││Refreshes automatically · t to refresh now                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ refreshes every 2s · t refresh now · esc back · ? help
+== inspect
+ gdocker  › containers › shop › shop-web-1 › inspect       ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Container Inspect (JSON)                                                │
+│                                  ││shop-web-1 · 4 lines                                                    │
+│  ▼ shop (1/2)                    ││                                                                        │
+│▌   ● shop-web-1                  ││   1 {                                                                  │
+│    ■ shop-db-1                   ││   2   "Id": "0123456789ab",                                            │
+│  ● redis                         ││   3   "Name": "/shop-web-1"                                            │
+│                                  ││   4 }                                                                  │
+│                                  ││                                                                        │
+│                                  ││Line 1/4 (1-4 visible, 25%)                                             │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ j/k gg/G ^d/^u scroll · esc back · : command · ? help
+== logs
+ gdocker  › containers › shop › shop-web-1 › logs          ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Logs                                                                    │
+│                                  ││shop-web-1 · 2 lines · paused · wrap                                    │
+│  ▼ shop (1/2)                    ││                                                                        │
+│▌   ● shop-web-1                  ││   1 2024-05-01T12:00:00.000000000Z GET / 200                           │
+│    ■ shop-db-1                   ││   2 2024-05-01T12:00:01.000000000Z GET /favicon.ico 404                │
+│  ● redis                         ││                                                                        │
+│                                  ││Line 2/2 (1-2 visible, 100%)                                            │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ containers │ 2/4                                                                         
+ j/k gg/G ^d/^u · / search · n/N next/prev · f follow · w wrap · V/v select · y yank · : command · esc back
+== command line
+ gdocker  › containers › shop › shop-web-1                 ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│  ▼ shop (1/2)                    ││l logs · e shell · p ports · v env · t stats · i inspect                │
+│▌   ● shop-web-1                  ││                                                                        │
+│    ■ shop-db-1                   ││Name        shop-web-1                                                  │
+│  ● redis                         ││Status      Up 2 hours                                                  │
+│                                  ││Image       nginx:1.27                                                  │
+│                                  ││ID          0123456789ab                                                │
+│                                  ││Project     shop                                                        │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││Ports       1 mapped                                                    │
+│                                  ││  localhost:8080 -> 80/tcp                                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ COMMAND  :ss 
+ tab/S-tab complete · ↑↓ history · enter run · esc cancel
+== confirm
+ gdocker  › containers › shop › shop-web-1                 ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Containers [1]                    ││Details                                                                 │
+│                                  ││                                                                        │
+│  ▼ shop (1/2)                    ││l logs · e shell · p ports · v env · t stats · i inspect                │
+│▌   ● shop-web-1                  ││                                                                        │
+│    ■ shop-db-1                   ││Name        shop-web-1                                                  │
+│  ● redis                         ││Status      Up 2 hours                                                  │
+│                                  ││Image       nginx:1.27                                                  │
+│                                  ││ID          0123456789ab                                                │
+│                                  ││Project     shop                                                        │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││Ports       1 mapped                                                    │
+│                                  ││  localhost:8080 -> 80/tcp                                              │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│2/4 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ CONFIRM  Delete container shop-web-1? (y/N)                                                                  
+ y confirm · any other key cancel
+== help
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  GDocker Help                                                                                              │
+│  Keyboard and command reference · lines 1-19 of 47                                                         │
+│                                                                                                            │
+│  Navigation                                                                                                │
+│    1 / 2 / 3 / 4              Show containers / volumes / images / networks                                │
+│    j, down / k, up            Move down / up (with count: 5j)                                              │
+│    gg, home / G, end          Jump to top / bottom                                                         │
+│    ctrl+d / ctrl+u            Half page down / up                                                          │
+│    H / M / L                  Top / middle / bottom of screen                                              │
+│    zz / zt / zb               Put cursor line at center / top / bottom                                     │
+│    ctrl+e / ctrl+y            Scroll view without moving the cursor                                        │
+│    space, enter               Expand or collapse compose project                                           │
+│                                                                                                            │
+│  Container Actions                                                                                         │
+│    :s / :S                    Start / stop container                                                       │
+│    r                          Restart container                                                            │
+│    d                          Delete container, volume or image (asks first)                               │
+│    l                          View logs                                                                    │
+│    e                          Open a shell in the container                                                │
+│    p                          View port mappings                                                           │
+│    v                          View environment variables                                                   │
+│    t                          View live stats                                                              │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ HELP  ssh://dev                                                                                              
+ j/k scroll · gg/G top/bottom · esc/q/? close help                                                            
+== volumes
+ gdocker  › volumes                                        ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Volumes [2]                       ││Details                                                                 │
+│                                  ││                                                                        │
+│▌ ◉ pgdata                        ││Name        pgdata                                                      │
+│                                  ││Driver      local                                                       │
+│                                  ││Mountpoint  /var/lib/docker/volumes/pgdata                              │
+│                                  ││Scope       local                                                       │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│1/1 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ volumes │ 1/1                                                                            
+ j/k move · d delete · 1-4 switch resource · : command · ? help · :q quit
+== images
+ gdocker  › images                                         ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Images [3]                        ││Details                                                                 │
+│                                  ││                                                                        │
+│▌ ▢ nginx:1.27                    ││ID          sha256:abc123def456                                         │
+│                                  ││Tags                                                                    │
+│                                  ││  nginx:1.27                                                            │
+│                                  ││Size        192.00 MiB                                                  │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│1/1 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ images │ 1/1                                                                             
+ j/k move · d delete · 1-4 switch resource · : command · ? help · :q quit
+== networks
+ gdocker  › networks                                       ● 2  ■ 1  ·  1 volumes  ·  1 images  ·  1 networks
+╭──────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────╮
+│Networks [4]                      ││Details                                                                 │
+│                                  ││                                                                        │
+│▌ ⬡ shop_default                  ││Name        shop_default                                                │
+│                                  ││ID          net123456789                                                │
+│                                  ││Driver      bridge                                                      │
+│                                  ││Scope       local                                                       │
+│                                  ││Internal    No                                                          │
+│                                  ││Created     931 days ago                                                │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│                                  ││                                                                        │
+│1/1 · ? for help                  ││                                                                        │
+╰──────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────╯
+ NORMAL  ssh://dev │ networks │ 1/1                                                                           
+ j/k move · 1-4 switch resource · : command · ? help · :q quit

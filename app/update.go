@@ -1,4 +1,4 @@
-package models
+package app
 
 import (
 	"fmt"
@@ -9,41 +9,11 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Gandalfalex/vim-kit/cmdline"
+	"gdocker/docker"
+	"gdocker/models"
+	tk "github.com/Gandalfalex/tuikit"
 	"github.com/Gandalfalex/vim-kit/keys"
 	"github.com/Gandalfalex/vim-kit/motion"
-)
-
-// These will be set by the docker and ui packages to avoid circular imports
-var (
-	GroupByProjectFunc      func([]Container) ([]Container, []ComposeGroup)
-	RebuildItemsFunc        func(*Model)
-	RebuildVolumeItemsFunc  func(*Model)
-	RebuildImageItemsFunc   func(*Model)
-	RebuildNetworkItemsFunc func(*Model)
-	RefreshContainersFunc   func(*Model) tea.Cmd
-	RefreshVolumesFunc      func(*Model) tea.Cmd
-	RefreshImagesFunc       func(*Model) tea.Cmd
-	RefreshNetworksFunc     func(*Model) tea.Cmd
-	LoadEnvFunc             func(*Model) tea.Cmd
-	ConnectDockerHostFunc   func(*Model, string) tea.Cmd
-	StartContainerFunc      func(*Model) tea.Cmd
-	StopContainerFunc       func(*Model) tea.Cmd
-	RestartContainerFunc    func(*Model) tea.Cmd
-	DeleteContainerFunc     func(*Model) tea.Cmd
-	DeleteVolumeFunc        func(*Model) tea.Cmd
-	DeleteImageFunc         func(*Model) tea.Cmd
-	LoadLogsFunc            func(*Model) tea.Cmd
-	FollowLogsFunc          func(*Model) tea.Cmd
-	StopFollowLogsFunc      func(*Model)
-	LoadInspectFunc         func(*Model) tea.Cmd
-	LoadStatsFunc           func(*Model) tea.Cmd
-	ExecShellFunc           func(*Model) tea.Cmd
-	OpenPortInBrowserFunc   func(*Model) tea.Cmd
-	QuitFunc                func(*Model)
-	RenderViewFunc          func(*Model) string
-	// HelpScrollRangeFunc returns how many scroll positions the help view has.
-	HelpScrollRangeFunc func(*Model) int
 )
 
 const (
@@ -51,12 +21,17 @@ const (
 	statsRefreshEvery = 2 * time.Second
 )
 
-type statusClearMsg struct{ seq int }
+// startupMsg shows a status message once the program runs, so that it
+// expires like any other.
+type startupMsg struct {
+	text  string
+	isErr bool
+}
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{autoRefreshTickCmd(m.AutoRefreshSecs)}
-	if m.StatusMessage != "" {
-		cmds = append(cmds, statusClearCmd(m.statusSeq, 2*statusTimeout))
+	if m.startup != "" {
+		cmds = append(cmds, func() tea.Msg { return startupMsg{m.startup, true} })
 	}
 	return tea.Batch(cmds...)
 }
@@ -64,31 +39,26 @@ func (m Model) Init() tea.Cmd {
 // Update wraps update so every new status message expires after a while
 // instead of hiding the key hints until the next action.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	prev, prevErr := m.StatusMessage, m.StatusError
-	m.StatusError = false // set again by update when it reports a failure
-	next, cmd := m.update(msg)
-	if next.StatusMessage == prev {
-		next.StatusError = prevErr
-	} else if next.StatusMessage != "" {
-		next.statusSeq++
-		timeout := statusTimeout
-		if next.StatusError {
-			timeout *= 2
-		}
-		cmd = tea.Batch(cmd, statusClearCmd(next.statusSeq, timeout))
+	m.ensure()
+	if cmd, ok := m.Shell.Update(msg); ok {
+		return m, cmd
 	}
-	return next, cmd
+	prev, prevErr := m.Status, m.StatusErr
+	m.StatusErr = false // set again by update when it reports a failure
+	next, cmd := m.update(msg)
+	if next.Status == prev {
+		next.StatusErr = prevErr
+	}
+	return next, tea.Batch(cmd, next.Expire(prev))
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case statusClearMsg:
-		if msg.seq == m.statusSeq {
-			m.StatusMessage = ""
-		}
+	case startupMsg:
+		m.Status, m.StatusErr = msg.text, msg.isErr
 		return m, nil
 
-	case AutoRefreshTickMsg:
+	case models.AutoRefreshTickMsg:
 		return m, tea.Batch(autoRefreshTickCmd(m.AutoRefreshSecs), refreshCurrent(&m))
 
 	case tea.WindowSizeMsg:
@@ -97,7 +67,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.LogViewer.SetSize(m.DetailWidth(), m.Height-3) // as passed to LogViewer.View
 		return m, nil
 
-	case ContainersRefreshedMsg:
+	case models.ContainersRefreshedMsg:
 		expandedProjects := make(map[string]bool)
 		for _, p := range m.Projects {
 			if p.Expanded {
@@ -107,7 +77,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 		key := selectionKey(&m)
 		m.Containers = msg.Containers
-		m.Standalone, m.Projects = GroupByProjectFunc(msg.Containers)
+		m.Standalone, m.Projects = groupByProject(msg.Containers)
 
 		for i := range m.Projects {
 			if expandedProjects[m.Projects[i].Name] {
@@ -115,25 +85,25 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 
-		if m.NavMode == NavContainers {
+		if m.NavMode == models.NavContainers {
 			rebuildItems(&m, key)
 		}
 		if len(msg.Recreated) > 0 {
 			if len(msg.Recreated) == 1 {
 				r := msg.Recreated[0]
-				m.StatusMessage = fmt.Sprintf("Container recreated: %s (%s -> %s)", r.Name, shortID(r.OldID), shortID(r.NewID))
+				m.Status = fmt.Sprintf("Container recreated: %s (%s -> %s)", r.Name, shortID(r.OldID), shortID(r.NewID))
 			} else {
-				m.StatusMessage = fmt.Sprintf("%d containers recreated", len(msg.Recreated))
+				m.Status = fmt.Sprintf("%d containers recreated", len(msg.Recreated))
 			}
 		}
-		if c := m.SelectedContainer(); LoadEnvFunc != nil && m.ViewMode == ViewEnv && c != nil && !c.EnvLoaded {
-			m.StatusMessage = "Loading environment variables..."
-			return m, LoadEnvFunc(&m)
+		if c := m.SelectedContainer(); m.ViewMode == models.ViewEnv && c != nil && !c.EnvLoaded {
+			m.Status = "Loading environment variables..."
+			return m, m.docker().LoadEnv(c)
 		}
 		return m, nil
 
-	case LogsLoadedMsg:
-		if m.ViewMode != ViewLogs {
+	case models.LogsLoadedMsg:
+		if m.ViewMode != models.ViewLogs {
 			return m, nil // left the log view before the logs arrived
 		}
 		containerName := "container"
@@ -142,135 +112,133 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.LogViewer.SetLines(msg.Lines, containerName)
 		m.LogSince = msg.Since
-		m.StatusMessage = ""
+		m.Status = ""
 		m.LogViewer.FollowingLogs = msg.Follow
 		if m.LogViewer.FollowingLogs {
-			return m, FollowLogsFunc(&m)
+			return m, m.followLogs()
 		}
 		return m, nil
 
-	case LogsFailedMsg:
-		if m.ViewMode == ViewLogs {
-			m.ViewMode = ViewDetails
+	case models.LogsFailedMsg:
+		if m.ViewMode == models.ViewLogs {
+			m.ViewMode = models.ViewDetails
 		}
-		m.StatusMessage = fmt.Sprintf("Failed to load logs: %v", msg.Err)
-		m.StatusError = true
+		m.Status = fmt.Sprintf("Failed to load logs: %v", msg.Err)
+		m.StatusErr = true
 		return m, nil
 
-	case LogsFollowedMsg:
+	case models.LogsFollowedMsg:
 		if len(msg.Lines) > 0 {
 			m.LogViewer.AppendLines(msg.Lines)
 		}
 		if !msg.Since.IsZero() {
 			m.LogSince = msg.Since
 		}
-		if m.ViewMode == ViewLogs && m.LogViewer.FollowingLogs {
-			return m, FollowLogsFunc(&m)
+		if m.ViewMode == models.ViewLogs && m.LogViewer.FollowingLogs {
+			return m, m.followLogs()
 		}
 		return m, nil
 
-	case LogFollowStoppedMsg:
+	case models.LogFollowStoppedMsg:
 		return m, nil
 
-	case StatsLoadedMsg:
-		if m.ViewMode != ViewStats || msg.Seq != m.StatsSeq {
+	case models.StatsLoadedMsg:
+		if m.ViewMode != models.ViewStats || msg.Seq != m.StatsSeq {
 			return m, nil // stale: view was left or restarted
 		}
 		m.Stats = msg.Stats
 		return m, statsTickCmd(msg.Seq)
 
-	case StatsTickMsg:
-		if m.ViewMode == ViewStats && msg.Seq == m.StatsSeq && LoadStatsFunc != nil {
-			return m, LoadStatsFunc(&m)
+	case models.StatsTickMsg:
+		if m.ViewMode == models.ViewStats && msg.Seq == m.StatsSeq {
+			return m, m.docker().LoadStats(m.SelectedContainer(), m.StatsSeq)
 		}
 		return m, nil
 
-	case EnvLoadedMsg:
+	case models.EnvLoadedMsg:
 		applyContainerEnv(&m, msg.ContainerID, msg.Env)
-		if m.ViewMode == ViewEnv {
-			m.StatusMessage = ""
+		if m.ViewMode == models.ViewEnv {
+			m.Status = ""
 		}
 		return m, nil
 
-	case DockerConnectedMsg:
-		if StopFollowLogsFunc != nil {
-			StopFollowLogsFunc(&m)
+	case docker.ConnectedMsg:
+		m.docker().Close()
+		m.Backend = nil
+		if msg.Client != nil {
+			m.Backend = msg.Client
 		}
-		if m.DockerClient != nil {
-			m.DockerClient.Close()
-		}
-		m.DockerClient = msg.Client
 		m.DockerHost = msg.Host
 		m.Containers = msg.Containers
 		m.Volumes = msg.Volumes
 		m.Images = msg.Images
 		m.Networks = msg.Networks
-		m.Standalone, m.Projects = GroupByProjectFunc(m.Containers)
+		m.Standalone, m.Projects = groupByProject(m.Containers)
 		m.Cursor, m.ListTop = 0, 0
 		rebuildItems(&m, "")
-		m.ViewMode = ViewDetails
+		m.ViewMode = models.ViewDetails
 		m.LogSince = time.Time{}
-		if msg.Host == "" {
-			m.StatusMessage = "Connected to local Docker"
+		if m.DockerHost == "" {
+			m.Status = "Connected to local Docker"
 		} else {
-			m.StatusMessage = "Connected to " + msg.Host
+			m.Status = "Connected to " + m.DockerHost
 		}
 		return m, nil
 
-	case ActionResultMsg:
-		m.StatusMessage = msg.Message
-		m.StatusError = !msg.Success
+	case models.ActionResultMsg:
+		m.Status = msg.Message
+		m.StatusErr = !msg.Success
 		if msg.Success {
 			return m, refreshCurrent(&m)
 		}
 		return m, nil
 
-	case VolumesLoadedMsg:
+	case models.VolumesLoadedMsg:
 		key := selectionKey(&m)
 		m.Volumes = msg.Volumes
-		if m.NavMode == NavVolumes {
+		if m.NavMode == models.NavVolumes {
 			rebuildItems(&m, key)
 		}
 		if msg.Status != "" {
-			m.StatusMessage = msg.Status
+			m.Status = msg.Status
 		}
 		return m, nil
 
-	case ImagesLoadedMsg:
+	case models.ImagesLoadedMsg:
 		key := selectionKey(&m)
 		m.Images = msg.Images
-		if m.NavMode == NavImages {
+		if m.NavMode == models.NavImages {
 			rebuildItems(&m, key)
 		}
 		if msg.Status != "" {
-			m.StatusMessage = msg.Status
+			m.Status = msg.Status
 		}
 		return m, nil
 
-	case NetworksLoadedMsg:
+	case models.NetworksLoadedMsg:
 		key := selectionKey(&m)
 		m.Networks = msg.Networks
-		if m.NavMode == NavNetworks {
+		if m.NavMode == models.NavNetworks {
 			rebuildItems(&m, key)
 		}
 		return m, nil
 
-	case InspectLoadedMsg:
-		if m.ViewMode != ViewInspect {
+	case models.InspectLoadedMsg:
+		if m.ViewMode != models.ViewInspect {
 			return m, nil
 		}
 		m.InspectData = msg.Data
 		m.InspectScroll, m.InspectTop = 0, 0
-		m.StatusMessage = ""
+		m.Status = ""
 		return m, nil
 
 	case tea.PasteMsg:
 		text := singleLine(msg.Content)
 		switch {
-		case m.CommandMode:
-			m.CommandInput += text
-			m.CmdLine.Close()
-		case m.ViewMode == ViewLogs && m.LogViewer.IsSearchMode():
+		case m.commandOpen():
+			m.cmd.Line.Close()
+			return m, m.prompt.Update(tea.PasteMsg{Content: text})
+		case m.ViewMode == models.ViewLogs && m.LogViewer.IsSearchMode():
 			m.LogViewer, _ = m.LogViewer.Update(tea.PasteMsg{Content: text})
 		}
 		return m, nil
@@ -295,14 +263,14 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		confirm := m.Confirm
 		m.Confirm = nil
 		if key == "y" || key == "Y" {
-			m.StatusMessage = "Working..."
+			m.Status = "Working..."
 			return m, confirm.Cmd
 		}
-		m.StatusMessage = "Cancelled"
+		m.Status = "Cancelled"
 		return m, nil
 	}
 
-	if m.CommandMode {
+	if m.commandOpen() {
 		return m.handleCommandKey(msg)
 	}
 
@@ -310,7 +278,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.handleHelpKey(key), nil
 	}
 
-	logSearch := m.ViewMode == ViewLogs && m.LogViewer.IsSearchMode()
+	logSearch := m.ViewMode == models.ViewLogs && m.LogViewer.IsSearchMode()
 
 	// Allow entering command mode from any view (including logs), but not
 	// while typing a search query.
@@ -319,30 +287,28 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	// Delegate to log viewer when in log view
-	if m.ViewMode == ViewLogs {
+	if m.ViewMode == models.ViewLogs {
 		wasFollowing := m.LogViewer.FollowingLogs
 		updated, cmd := m.LogViewer.Update(msg)
 		m.LogViewer = updated
-		if wasFollowing && !m.LogViewer.FollowingLogs && StopFollowLogsFunc != nil {
-			StopFollowLogsFunc(&m)
+		if wasFollowing && !m.LogViewer.FollowingLogs {
+			m.docker().StopFollowLogs()
 		}
 		// Process output messages from the component
 		if cmd != nil {
 			outMsg := cmd()
 			switch outMsg := outMsg.(type) {
 			case logviewer.StatusMsg:
-				m.StatusMessage = outMsg.Text
+				m.Status = outMsg.Text
 				return m, nil
 			case logviewer.FollowRequestMsg:
-				m.StatusMessage = "Log follow enabled"
-				return m, FollowLogsFunc(&m)
+				m.Status = "Log follow enabled"
+				return m, m.followLogs()
 			case logviewer.ExitMsg:
-				if StopFollowLogsFunc != nil {
-					StopFollowLogsFunc(&m)
-				}
-				m.ViewMode = ViewDetails
+				m.docker().StopFollowLogs()
+				m.ViewMode = models.ViewDetails
 				m.LogSince = time.Time{}
-				m.StatusMessage = ""
+				m.Status = ""
 				return m, nil
 			default:
 				return m, cmd
@@ -364,65 +330,18 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleCommandKey edits the ":" line. Completion candidates are looked up
-// on tab rather than per key press, since :ssh reads ~/.ssh/config for them.
+// handleCommandKey edits the ":" line. Candidates are looked up on tab
+// only, since :ssh reads ~/.ssh/config for them.
 func (m Model) handleCommandKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	setInput := func(text string, ok bool) {
-		if ok {
-			m.CommandInput = text
-		}
+	esc := msg.String() == "esc"
+	cmd, err := tk.HandleCommandKey(&m.cmd, &m, &m.prompt, msg)
+	if err != nil {
+		m.Status, m.StatusErr = err.Error(), true
 	}
-	switch msg.String() {
-	case "enter":
-		m.CommandMode = false
-		m.CmdLine.Commit(strings.TrimSpace(m.CommandInput))
-		return m, executeCommand(&m)
-	case "esc":
-		m.CommandMode = false
-		m.CommandInput = ""
-		m.CmdLine.Close()
-		m.StatusMessage = ""
-	case "backspace":
-		if m.CommandInput == "" {
-			m.CommandMode = false // like vim: backspace on empty ":" leaves
-		}
-		m.CommandInput = trimLastRune(m.CommandInput)
-		m.CmdLine.Close()
-	case "tab", "ctrl+n":
-		completeCommandInput(&m, 1)
-	case "shift+tab", "ctrl+p":
-		completeCommandInput(&m, -1)
-	case "up":
-		setInput(m.CmdLine.Recall(-1))
-		m.CmdLine.Close()
-	case "down":
-		setInput(m.CmdLine.Recall(1))
-		m.CmdLine.Close()
-	default:
-		if msg.Text != "" {
-			m.CommandInput += msg.Text
-			m.CmdLine.Close()
-		}
+	if esc {
+		m.Status = ""
 	}
-	return m, nil
-}
-
-// completeCommandInput cycles through the candidates for the typed text.
-func completeCommandInput(m *Model, dir int) {
-	if !m.CmdLine.Cycling() {
-		m.CmdLine.SetItems(Commands.Complete(m, m.CommandInput))
-	}
-	if items := m.CmdLine.Items; len(items) == 1 && items[0].Value == strings.TrimSpace(m.CommandInput) {
-		// Nothing left to complete in the name: move on to the argument.
-		if c, err := Commands.Resolve(items[0].Value); err == nil && c.Args != "" && !strings.HasSuffix(m.CommandInput, " ") {
-			m.CommandInput = items[0].Value + " "
-		}
-		m.CmdLine.Close()
-		return
-	}
-	if text, ok := m.CmdLine.Cycle(dir); ok {
-		m.CommandInput = text
-	}
+	return m, cmd
 }
 
 // handleHelpKey scrolls or closes the help view; no other key reaches the
@@ -438,10 +357,7 @@ func (m Model) handleHelpKey(key string) Model {
 	if !ok {
 		return m
 	}
-	n := 1
-	if HelpScrollRangeFunc != nil {
-		n = max(HelpScrollRangeFunc(&m), 1)
-	}
+	n := max(helpScrollRange(&m), 1)
 	w := motion.Window{Cursor: m.HelpScroll}
 	if w.Apply(ev, n, max(m.Height/2, 1)) {
 		m.HelpScroll = w.Cursor
@@ -457,7 +373,7 @@ func (m *Model) bindings() *config.KeyBindings {
 }
 
 func (m Model) View() tea.View {
-	v := tea.NewView(RenderViewFunc(&m))
+	v := tea.NewView(RenderView(&m))
 	v.AltScreen = true
 	v.WindowTitle = "gdocker"
 	return v
@@ -465,21 +381,17 @@ func (m Model) View() tea.View {
 
 // refreshCurrent reloads the resource list that is currently shown.
 func refreshCurrent(m *Model) tea.Cmd {
-	var refresh func(*Model) tea.Cmd
 	switch m.NavMode {
-	case NavContainers:
-		refresh = RefreshContainersFunc
-	case NavVolumes:
-		refresh = RefreshVolumesFunc
-	case NavImages:
-		refresh = RefreshImagesFunc
-	case NavNetworks:
-		refresh = RefreshNetworksFunc
+	case models.NavContainers:
+		return m.docker().RefreshContainers(m.Containers)
+	case models.NavVolumes:
+		return m.docker().RefreshVolumes()
+	case models.NavImages:
+		return m.docker().RefreshImages()
+	case models.NavNetworks:
+		return m.docker().RefreshNetworks()
 	}
-	if refresh == nil {
-		return nil
-	}
-	return refresh(m)
+	return nil
 }
 
 // selectionKey identifies the item under the cursor across list rebuilds.
@@ -491,7 +403,7 @@ func selectionKey(m *Model) string {
 	return itemKey(item)
 }
 
-func itemKey(item ListItem) string {
+func itemKey(item models.ListItem) string {
 	switch {
 	case item.IsProject && item.Project != nil:
 		return "project/" + item.Project.Name
@@ -510,17 +422,15 @@ func itemKey(item ListItem) string {
 // rebuildItems rebuilds the list for the current nav mode and puts the
 // cursor back on the item identified by key, if it still exists.
 func rebuildItems(m *Model, key string) {
-	rebuild := RebuildItemsFunc
 	switch m.NavMode {
-	case NavVolumes:
-		rebuild = RebuildVolumeItemsFunc
-	case NavImages:
-		rebuild = RebuildImageItemsFunc
-	case NavNetworks:
-		rebuild = RebuildNetworkItemsFunc
-	}
-	if rebuild != nil {
-		rebuild(m)
+	case models.NavVolumes:
+		rebuildVolumeItems(m)
+	case models.NavImages:
+		rebuildImageItems(m)
+	case models.NavNetworks:
+		rebuildNetworkItems(m)
+	default:
+		rebuildContainerItems(m)
 	}
 	if key == "" {
 		return
@@ -540,38 +450,24 @@ func trimLastRune(s string) string {
 	return s[:len(s)-size]
 }
 
-func statusClearCmd(seq int, after time.Duration) tea.Cmd {
-	return tea.Tick(after, func(time.Time) tea.Msg { return statusClearMsg{seq: seq} })
-}
-
 func statsTickCmd(seq int) tea.Cmd {
-	return tea.Tick(statsRefreshEvery, func(time.Time) tea.Msg { return StatsTickMsg{Seq: seq} })
+	return tea.Tick(statsRefreshEvery, func(time.Time) tea.Msg { return models.StatsTickMsg{Seq: seq} })
 }
 
-func executeCommand(m *Model) tea.Cmd {
-	name, arg := cmdline.Split(m.CommandInput)
-	m.CommandInput = ""
-	m.CmdLine.Close()
-	if name == "" {
-		return nil
-	}
-	if n, ok := cmdline.LineNumber(name); ok { // :42 jumps to line 42
-		gotoLine(m, n)
-		return nil
-	}
-	c, err := Commands.Resolve(name)
+// executeCommand runs a ":" line.
+func executeCommand(m *Model, line string) tea.Cmd {
+	m.ensure()
+	cmd, err := m.cmd.Run(m, line)
 	if err != nil {
-		m.StatusMessage = err.Error()
-		m.StatusError = true
-		return nil
+		m.Status, m.StatusErr = err.Error(), true
 	}
-	return c.Run(m, arg)
+	return cmd
 }
 
 // gotoLine moves the cursor of the current view to line n (1-based).
 func gotoLine(m *Model, n int) {
 	ev := keys.Event{Action: motion.Top, Count: max(n, 1), HasCount: true}
-	if m.ViewMode == ViewLogs {
+	if m.ViewMode == models.ViewLogs {
 		m.LogViewer.Goto(ev)
 		return
 	}
@@ -583,7 +479,7 @@ func autoRefreshTickCmd(intervalSec int) tea.Cmd {
 		intervalSec = 10
 	}
 	return tea.Tick(time.Duration(intervalSec)*time.Second, func(time.Time) tea.Msg {
-		return AutoRefreshTickMsg{}
+		return models.AutoRefreshTickMsg{}
 	})
 }
 
@@ -594,7 +490,7 @@ func shortID(id string) string {
 	return id
 }
 
-func runtimeID(c *Container) string {
+func runtimeID(c *models.Container) string {
 	if c == nil {
 		return ""
 	}
@@ -625,4 +521,15 @@ func applyContainerEnv(m *Model, containerID string, env []string) {
 			}
 		}
 	}
+}
+
+// followLogs waits for more log lines while the log view follows them, and
+// stops the follower otherwise.
+func (m *Model) followLogs() tea.Cmd {
+	c := m.SelectedContainer()
+	if m.ViewMode != models.ViewLogs || !m.LogViewer.FollowingLogs || c == nil {
+		m.docker().StopFollowLogs()
+		return nil
+	}
+	return m.docker().FollowLogs(c, m.LogSince)
 }

@@ -1,4 +1,6 @@
-package ui
+package app
+
+import ()
 
 // Container status icons
 const (

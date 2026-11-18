@@ -35,16 +35,7 @@ func TestFollowLogsDeliversStreamMessage(t *testing.T) {
 	}
 
 	c := models.Container{FullID: "full-1"}
-	m := models.Model{
-		ViewMode: models.ViewLogs,
-		Cursor:   0,
-		Items: []models.ListItem{
-			{IsContainer: true, Container: &c},
-		},
-	}
-	m.LogViewer.FollowingLogs = true
-
-	cmd := FollowLogs(&m)
+	cmd := (&Client{}).FollowLogs(&c, time.Time{})
 	if cmd == nil {
 		t.Fatalf("expected non-nil follow cmd")
 	}
@@ -68,16 +59,7 @@ func TestFollowLogsReturnsStoppedMessageOnClosedChannel(t *testing.T) {
 	}
 
 	c := models.Container{FullID: "full-1"}
-	m := models.Model{
-		ViewMode: models.ViewLogs,
-		Cursor:   0,
-		Items: []models.ListItem{
-			{IsContainer: true, Container: &c},
-		},
-	}
-	m.LogViewer.FollowingLogs = true
-
-	cmd := FollowLogs(&m)
+	cmd := (&Client{}).FollowLogs(&c, time.Time{})
 	if cmd == nil {
 		t.Fatalf("expected non-nil follow cmd")
 	}
@@ -116,7 +98,7 @@ func TestEnsureLogFollowerReusesSameContainerFollower(t *testing.T) {
 		t.Fatalf("expected one runner call, got %d", got)
 	}
 
-	StopFollowLogs(nil)
+	(&Client{}).StopFollowLogs()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -183,7 +165,7 @@ func TestStopFollowLogsClearsActiveFollower(t *testing.T) {
 	}
 
 	ensureLogFollower(nil, "container-a", time.Now())
-	StopFollowLogs(nil)
+	(&Client{}).StopFollowLogs()
 
 	logFollowMu.Lock()
 	active := activeFollower

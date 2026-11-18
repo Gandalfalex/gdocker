@@ -11,19 +11,14 @@ import (
 	"github.com/moby/moby/client"
 )
 
-func LoadContainers(m *models.Model) error {
-	containerList, err := m.DockerClient.ContainerList(context.Background(), client.ContainerListOptions{All: true})
+// listContainers lists all containers; prev keeps environments already
+// loaded.
+func (c *Client) listContainers(prev []models.Container) ([]models.Container, error) {
+	containerList, err := c.cli.ContainerList(context.Background(), client.ContainerListOptions{All: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	containers := containersFromList(containerList.Items, envCacheFromContainers(m.Containers))
-
-	// Group by compose projects
-	m.Containers = containers
-	m.Standalone, m.Projects = GroupByProject(containers)
-	RebuildItems(m)
-
-	return nil
+	return containersFromList(containerList.Items, envCacheFromContainers(prev)), nil
 }
 
 type cachedContainerEnv struct {
@@ -95,87 +90,6 @@ func containersFromList(items []container.Summary, envCache map[string]cachedCon
 	return containers
 }
 
-func GroupByProject(containers []models.Container) ([]models.Container, []models.ComposeGroup) {
-	standalone := []models.Container{}
-	projectMap := make(map[string][]models.Container)
-
-	for _, c := range containers {
-		if c.Project == "" {
-			standalone = append(standalone, c)
-		} else {
-			projectMap[c.Project] = append(projectMap[c.Project], c)
-		}
-	}
-
-	// Map iteration order is random; sort so the list does not reshuffle
-	// on every refresh.
-	byName := func(cs []models.Container) {
-		sort.SliceStable(cs, func(i, j int) bool { return cs[i].Name < cs[j].Name })
-	}
-	byName(standalone)
-
-	var projects []models.ComposeGroup
-	for name, containers := range projectMap {
-		byName(containers)
-		projects = append(projects, models.ComposeGroup{
-			Name:       name,
-			Containers: containers,
-			Expanded:   false,
-		})
-	}
-	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
-
-	return standalone, projects
-}
-
-func RebuildItems(m *models.Model) {
-	m.Items = []models.ListItem{}
-
-	// Add standalone containers
-	for i := range m.Standalone {
-		m.Items = append(m.Items, models.ListItem{
-			IsContainer: true,
-			Container:   &m.Standalone[i],
-		})
-	}
-
-	// Add compose projects
-	for i := range m.Projects {
-		m.Items = append(m.Items, models.ListItem{
-			IsProject: true,
-			Project:   &m.Projects[i],
-			Index:     i,
-		})
-
-		// Add expanded containers
-		if m.Projects[i].Expanded {
-			for j := range m.Projects[i].Containers {
-				m.Items = append(m.Items, models.ListItem{
-					IsContainer: true,
-					Container:   &m.Projects[i].Containers[j],
-				})
-			}
-		}
-	}
-
-	// Ensure cursor is valid
-	if m.Cursor >= len(m.Items) {
-		m.Cursor = len(m.Items) - 1
-	}
-	if m.Cursor < 0 && len(m.Items) > 0 {
-		m.Cursor = 0
-	}
-}
-
-func LoadVolumes(m *models.Model) error {
-	volumes, err := listVolumes(m.DockerClient)
-	if err != nil {
-		return err
-	}
-	m.Volumes = volumes
-	return nil
-}
-
 func listVolumes(cli *client.Client) ([]models.Volume, error) {
 	volumeList, err := cli.VolumeList(context.Background(), client.VolumeListOptions{})
 	if err != nil {
@@ -205,15 +119,6 @@ func listVolumes(cli *client.Client) ([]models.Volume, error) {
 	return volumes, nil
 }
 
-func LoadImages(m *models.Model) error {
-	images, err := listImages(m.DockerClient)
-	if err != nil {
-		return err
-	}
-	m.Images = images
-	return nil
-}
-
 func listImages(cli *client.Client) ([]models.Image, error) {
 	imageList, err := cli.ImageList(context.Background(), client.ImageListOptions{All: true})
 	if err != nil {
@@ -230,55 +135,6 @@ func listImages(cli *client.Client) ([]models.Image, error) {
 		})
 	}
 	return images, nil
-}
-
-func RebuildVolumeItems(m *models.Model) {
-	m.Items = []models.ListItem{}
-
-	for i := range m.Volumes {
-		m.Items = append(m.Items, models.ListItem{
-			IsVolume: true,
-			Volume:   &m.Volumes[i],
-			Index:    i,
-		})
-	}
-
-	// Ensure cursor is valid
-	if m.Cursor >= len(m.Items) {
-		m.Cursor = len(m.Items) - 1
-	}
-	if m.Cursor < 0 && len(m.Items) > 0 {
-		m.Cursor = 0
-	}
-}
-
-func RebuildImageItems(m *models.Model) {
-	m.Items = []models.ListItem{}
-
-	for i := range m.Images {
-		m.Items = append(m.Items, models.ListItem{
-			IsImage: true,
-			Image:   &m.Images[i],
-			Index:   i,
-		})
-	}
-
-	// Ensure cursor is valid
-	if m.Cursor >= len(m.Items) {
-		m.Cursor = len(m.Items) - 1
-	}
-	if m.Cursor < 0 && len(m.Items) > 0 {
-		m.Cursor = 0
-	}
-}
-
-func LoadNetworks(m *models.Model) error {
-	networks, err := listNetworks(m.DockerClient)
-	if err != nil {
-		return err
-	}
-	m.Networks = networks
-	return nil
 }
 
 func listNetworks(cli *client.Client) ([]models.Network, error) {
@@ -301,24 +157,4 @@ func listNetworks(cli *client.Client) ([]models.Network, error) {
 	}
 	sort.Slice(networks, func(i, j int) bool { return networks[i].Name < networks[j].Name })
 	return networks, nil
-}
-
-func RebuildNetworkItems(m *models.Model) {
-	m.Items = []models.ListItem{}
-
-	for i := range m.Networks {
-		m.Items = append(m.Items, models.ListItem{
-			IsNetwork: true,
-			Network:   &m.Networks[i],
-			Index:     i,
-		})
-	}
-
-	// Ensure cursor is valid
-	if m.Cursor >= len(m.Items) {
-		m.Cursor = len(m.Items) - 1
-	}
-	if m.Cursor < 0 && len(m.Items) > 0 {
-		m.Cursor = 0
-	}
 }

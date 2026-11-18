@@ -1,4 +1,4 @@
-package models
+package app
 
 import (
 	"bufio"
@@ -11,6 +11,8 @@ import (
 	"gdocker/config"
 
 	tea "charm.land/bubbletea/v2"
+	"gdocker/models"
+	tk "github.com/Gandalfalex/tuikit"
 	"github.com/Gandalfalex/vim-kit/cmdline"
 	"github.com/Gandalfalex/vim-kit/keys"
 	"github.com/Gandalfalex/vim-kit/motion"
@@ -59,7 +61,7 @@ func (m *Model) keymap() *keys.Keymap {
 			m.keymaps.ports, _ = config.Default().PortsKeymap()
 		}
 	}
-	if m.ViewMode == ViewPorts {
+	if m.ViewMode == models.ViewPorts {
 		return m.keymaps.ports
 	}
 	return m.keymaps.main
@@ -73,21 +75,21 @@ func applyMotion(m *Model, ev keys.Event) bool {
 	var n, h int
 	unused := 0
 	switch m.ViewMode {
-	case ViewInspect:
+	case models.ViewInspect:
 		cursor, top = &m.InspectScroll, &m.InspectTop
 		n, h = strings.Count(m.InspectData, "\n")+1, m.PaneRows()
-	case ViewEnv:
+	case models.ViewEnv:
 		cursor, top, h = &m.EnvScroll, &m.EnvTop, m.PaneRows()
 		if c := m.SelectedContainer(); c != nil {
 			n = len(c.Env)
 		}
-	case ViewPorts:
+	case models.ViewPorts:
 		cursor, top = &m.SelectedPort, &unused
 		if c := m.SelectedContainer(); c != nil {
 			n = len(c.Ports)
 		}
 		h = n
-	case ViewStats:
+	case models.ViewStats:
 		cursor, top, n, h = &unused, &unused, 1, 1
 	default:
 		cursor, top, n, h = &m.Cursor, &m.ListTop, len(m.Items), m.ListRows()
@@ -106,45 +108,45 @@ func applyMotion(m *Model, ev keys.Event) bool {
 // Navigation handlers
 
 func handleToggleExpand(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewDetails && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsProject {
+	if m.ViewMode == models.ViewDetails && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsProject {
 		idx := m.Items[m.Cursor].Index
 		m.Projects[idx].Expanded = !m.Projects[idx].Expanded
-		RebuildItemsFunc(m)
+		rebuildContainerItems(m)
 	}
 	return *m, nil
 }
 
 // switchNav shows another resource list and reloads it in the background.
-func switchNav(m *Model, mode NavigationMode) (Model, tea.Cmd) {
-	if m.NavMode == mode && m.ViewMode == ViewDetails {
+func switchNav(m *Model, mode models.NavigationMode) (Model, tea.Cmd) {
+	if m.NavMode == mode && m.ViewMode == models.ViewDetails {
 		return *m, nil
 	}
 	if m.NavMode != mode {
 		m.Cursor, m.ListTop = 0, 0
 	}
 	m.NavMode = mode
-	m.ViewMode = ViewDetails
+	m.ViewMode = models.ViewDetails
 	rebuildItems(m, "")
 	return *m, refreshCurrent(m)
 }
 
-func handleSwitchContainer(m *Model) (Model, tea.Cmd) { return switchNav(m, NavContainers) }
-func handleSwitchVolume(m *Model) (Model, tea.Cmd)    { return switchNav(m, NavVolumes) }
-func handleSwitchImage(m *Model) (Model, tea.Cmd)     { return switchNav(m, NavImages) }
-func handleSwitchNetwork(m *Model) (Model, tea.Cmd)   { return switchNav(m, NavNetworks) }
+func handleSwitchContainer(m *Model) (Model, tea.Cmd) { return switchNav(m, models.NavContainers) }
+func handleSwitchVolume(m *Model) (Model, tea.Cmd)    { return switchNav(m, models.NavVolumes) }
+func handleSwitchImage(m *Model) (Model, tea.Cmd)     { return switchNav(m, models.NavImages) }
+func handleSwitchNetwork(m *Model) (Model, tea.Cmd)   { return switchNav(m, models.NavNetworks) }
 
 // Container action handlers
 
 // requireContainer returns the selected container, or sets a hint when the
 // cursor is on something else (and, with running set, when it is stopped).
-func requireContainer(m *Model, running bool) *Container {
+func requireContainer(m *Model, running bool) *models.Container {
 	c := m.SelectedContainer()
 	switch {
 	case c == nil:
-		m.StatusMessage = "Select a container first"
+		m.Status = "Select a container first"
 		return nil
 	case running && c.State != "running":
-		m.StatusMessage = c.Name + " is not running (:s to start)"
+		m.Status = c.Name + " is not running (:s to start)"
 		return nil
 	}
 	return c
@@ -155,8 +157,8 @@ func handleRestart(m *Model) (Model, tea.Cmd) {
 	if c == nil {
 		return *m, nil
 	}
-	m.StatusMessage = "Restarting " + c.Name + "..."
-	return *m, RestartContainerFunc(m)
+	m.Status = "Restarting " + c.Name + "..."
+	return *m, m.docker().Restart(c)
 }
 
 // handleDelete asks for confirmation; the command is built now so it keeps
@@ -174,23 +176,23 @@ func handleDelete(m *Model) (Model, tea.Cmd) {
 		if item.Container.State == "running" {
 			what = "RUNNING " + what
 		}
-		cmd = DeleteContainerFunc(m)
+		cmd = m.docker().Delete(item.Container)
 	case item.IsVolume:
 		what = "volume " + item.Volume.Name
-		cmd = DeleteVolumeFunc(m)
+		cmd = m.docker().DeleteVolume(item.Volume)
 	case item.IsImage:
 		what = "image " + item.Image.ID
 		if len(item.Image.RepoTags) > 0 {
 			what = "image " + item.Image.RepoTags[0]
 		}
-		cmd = DeleteImageFunc(m)
+		cmd = m.docker().DeleteImage(item.Image)
 	default:
-		m.StatusMessage = "Nothing to delete here"
+		m.Status = "Nothing to delete here"
 		return *m, nil
 	}
 	if cmd != nil {
 		m.Confirm = &Confirm{Prompt: "Delete " + what + "?", Cmd: cmd}
-		m.StatusMessage = ""
+		m.Status = ""
 	}
 	return *m, nil
 }
@@ -200,21 +202,22 @@ func handleLogs(m *Model) (Model, tea.Cmd) {
 	if c == nil {
 		return *m, nil
 	}
-	m.ViewMode = ViewLogs
+	m.ViewMode = models.ViewLogs
 	m.LogViewer.SetLoading(c.Name)
-	return *m, LoadLogsFunc(m)
+	return *m, m.docker().LoadLogs(c, m.LogTailLines)
 }
 
 func handleExec(m *Model) (Model, tea.Cmd) {
-	if requireContainer(m, true) == nil {
+	c := requireContainer(m, true)
+	if c == nil {
 		return *m, nil
 	}
-	return *m, ExecShellFunc(m)
+	return *m, m.docker().ExecShell(c)
 }
 
 func handlePorts(m *Model) (Model, tea.Cmd) {
 	if requireContainer(m, false) != nil {
-		m.ViewMode = ViewPorts
+		m.ViewMode = models.ViewPorts
 		m.SelectedPort = 0
 	}
 	return *m, nil
@@ -222,11 +225,11 @@ func handlePorts(m *Model) (Model, tea.Cmd) {
 
 func handleEnv(m *Model) (Model, tea.Cmd) {
 	if c := requireContainer(m, false); c != nil {
-		m.ViewMode = ViewEnv
+		m.ViewMode = models.ViewEnv
 		m.EnvScroll, m.EnvTop = 0, 0
-		if !c.EnvLoaded && LoadEnvFunc != nil {
-			m.StatusMessage = "Loading environment variables..."
-			return *m, LoadEnvFunc(m)
+		if !c.EnvLoaded {
+			m.Status = "Loading environment variables..."
+			return *m, m.docker().LoadEnv(c)
 		}
 	}
 	return *m, nil
@@ -234,30 +237,32 @@ func handleEnv(m *Model) (Model, tea.Cmd) {
 
 // handleStats opens the stats view (or restarts its refresh loop).
 func handleStats(m *Model) (Model, tea.Cmd) {
-	if requireContainer(m, true) == nil {
+	c := requireContainer(m, true)
+	if c == nil {
 		return *m, nil
 	}
-	if m.ViewMode != ViewStats {
+	if m.ViewMode != models.ViewStats {
 		m.Stats = nil
 	}
-	m.ViewMode = ViewStats
+	m.ViewMode = models.ViewStats
 	m.StatsSeq++
-	return *m, LoadStatsFunc(m)
+	return *m, m.docker().LoadStats(c, m.StatsSeq)
 }
 
 func handleInspect(m *Model) (Model, tea.Cmd) {
-	if requireContainer(m, false) == nil {
+	c := requireContainer(m, false)
+	if c == nil {
 		return *m, nil
 	}
-	m.ViewMode = ViewInspect
+	m.ViewMode = models.ViewInspect
 	m.InspectData = ""
 	m.InspectScroll, m.InspectTop = 0, 0
-	return *m, LoadInspectFunc(m)
+	return *m, m.docker().LoadInspect(c)
 }
 
 func handleOpenPort(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewPorts && m.Cursor < len(m.Items) && m.Items[m.Cursor].IsContainer {
-		return *m, OpenPortInBrowserFunc(m)
+	if c := m.SelectedContainer(); m.ViewMode == models.ViewPorts && c != nil {
+		return *m, m.docker().OpenPort(c, m.SelectedPort)
 	}
 	return *m, nil
 }
@@ -265,36 +270,35 @@ func handleOpenPort(m *Model) (Model, tea.Cmd) {
 // Command and view handlers
 
 func handleCommandMode(m *Model) (Model, tea.Cmd) {
-	m.CommandMode = true
-	m.CommandInput = ""
-	m.CmdLine.Open(nil)
-	m.StatusMessage = ""
-	return *m, nil
+	m.ensure()
+	m.cmd.Open(m)
+	m.Status = ""
+	return *m, m.prompt.Open(1, tk.ModeCommand, ":", tk.Placeholder, "")
 }
 
 func handleHelp(m *Model) (Model, tea.Cmd) {
 	m.HelpMode = true
 	m.HelpScroll = 0
-	m.StatusMessage = ""
+	m.Status = ""
 	return *m, nil
 }
 
 func handleBack(m *Model) (Model, tea.Cmd) {
-	if m.ViewMode == ViewPorts || m.ViewMode == ViewEnv || m.ViewMode == ViewStats || m.ViewMode == ViewInspect {
-		m.ViewMode = ViewDetails
+	if m.ViewMode == models.ViewPorts || m.ViewMode == models.ViewEnv || m.ViewMode == models.ViewStats || m.ViewMode == models.ViewInspect {
+		m.ViewMode = models.ViewDetails
 		m.SelectedPort = 0
 		m.Stats = nil
 		m.InspectData = ""
 		m.InspectScroll = 0
 	}
-	m.StatusMessage = ""
+	m.Status = ""
 	return *m, nil
 }
 
 // General handlers
 
 func handleForceQuit(m *Model) (Model, tea.Cmd) {
-	QuitFunc(m)
+	m.docker().Close()
 	return *m, tea.Quit
 }
 
@@ -328,7 +332,7 @@ func completeSSHHosts(m *Model, arg string) []cmdline.Item {
 }
 
 func cmdQuit(m *Model) tea.Cmd {
-	QuitFunc(m)
+	m.docker().Close()
 	return tea.Quit
 }
 
@@ -337,8 +341,8 @@ func cmdStart(m *Model) tea.Cmd {
 	if c == nil {
 		return nil
 	}
-	m.StatusMessage = "Starting " + c.Name + "..."
-	return StartContainerFunc(m)
+	m.Status = "Starting " + c.Name + "..."
+	return m.docker().Start(c)
 }
 
 func cmdStop(m *Model) tea.Cmd {
@@ -346,15 +350,15 @@ func cmdStop(m *Model) tea.Cmd {
 	if c == nil {
 		return nil
 	}
-	m.StatusMessage = "Stopping " + c.Name + "..."
-	return StopContainerFunc(m)
+	m.Status = "Stopping " + c.Name + "..."
+	return m.docker().Stop(c)
 }
 
 func cmdNoHighlight(m *Model) tea.Cmd {
 	m.LogViewer.SearchQuery = ""
 	m.LogViewer.SearchResults = nil
 	m.LogViewer.SearchResultIdx = 0
-	m.StatusMessage = "Search cleared"
+	m.Status = "Search cleared"
 	return nil
 }
 
@@ -365,17 +369,12 @@ func cmdHelp(m *Model) tea.Cmd {
 
 func cmdSSH(m *Model, args []string) tea.Cmd {
 	if len(args) < 1 {
-		m.StatusMessage = "Usage: :ssh <alias|host|local>"
+		m.Status = "Usage: :ssh <alias|host|local>"
 		return nil
 	}
-	if ConnectDockerHostFunc == nil {
-		m.StatusMessage = "SSH connection command is not available"
-		return nil
-	}
-
 	target := strings.TrimSpace(args[0])
 	if target == "" {
-		m.StatusMessage = "Usage: :ssh <alias|host|local>"
+		m.Status = "Usage: :ssh <alias|host|local>"
 		return nil
 	}
 
@@ -398,8 +397,8 @@ func cmdSSH(m *Model, args []string) tea.Cmd {
 		label = host
 	}
 
-	m.StatusMessage = "Connecting to " + label + "..."
-	return ConnectDockerHostFunc(m, host)
+	m.Status = "Connecting to " + label + "..."
+	return m.docker().Connect(host)
 }
 
 var sshConfigHostEndpointResolver = resolveSSHConfigHostEndpoint

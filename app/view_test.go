@@ -1,4 +1,4 @@
-package ui
+package app
 
 import (
 	"fmt"
@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func testModel(width, height int) *models.Model {
+func testModel(width, height int) *Model {
 	cfg := config.DefaultAppConfig()
-	m := &models.Model{
+	m := &Model{
 		KeyBindings: &cfg.KeyBindings,
 		UIConfig:    &cfg.UI,
 		Width:       width,
@@ -58,27 +58,27 @@ func TestLayoutFitsTerminal(t *testing.T) {
 	}
 	inspect := strings.Repeat("{\n  \"Key\": \""+strings.Repeat("v", 300)+"\"\n}\n", 40)
 
-	views := map[string]func(m *models.Model){
-		"details": func(m *models.Model) {},
-		"project": func(m *models.Model) { m.Cursor = 0 },
-		"logs": func(m *models.Model) {
+	views := map[string]func(m *Model){
+		"details": func(m *Model) {},
+		"project": func(m *Model) { m.Cursor = 0 },
+		"logs": func(m *Model) {
 			m.ViewMode = models.ViewLogs
 			m.LogViewer.SetLines(logs, "svc")
 			m.LogViewer.SearchQuery = "log"
 		},
-		"logs-nowrap": func(m *models.Model) {
+		"logs-nowrap": func(m *Model) {
 			m.ViewMode = models.ViewLogs
 			m.LogViewer.SetLines(logs, "svc")
 			m.LogViewer.WrapLogs = false
 		},
-		"ports":   func(m *models.Model) { m.ViewMode = models.ViewPorts },
-		"env":     func(m *models.Model) { m.ViewMode = models.ViewEnv; m.EnvScroll = 30 },
-		"stats":   func(m *models.Model) { m.ViewMode = models.ViewStats; m.Stats = &models.ContainerStats{} },
-		"inspect": func(m *models.Model) { m.ViewMode = models.ViewInspect; m.InspectData = inspect; m.InspectScroll = 50 },
-		"help":    func(m *models.Model) { m.HelpMode = true; m.HelpScroll = 5 },
-		"confirm": func(m *models.Model) { m.Confirm = &models.Confirm{Prompt: "Delete " + strings.Repeat("x", 300) + "?"} },
-		"status":  func(m *models.Model) { m.StatusMessage = strings.Repeat("long status\n", 40) },
-		"empty":   func(m *models.Model) { m.Items = nil },
+		"ports":   func(m *Model) { m.ViewMode = models.ViewPorts },
+		"env":     func(m *Model) { m.ViewMode = models.ViewEnv; m.EnvScroll = 30 },
+		"stats":   func(m *Model) { m.ViewMode = models.ViewStats; m.Stats = &models.ContainerStats{} },
+		"inspect": func(m *Model) { m.ViewMode = models.ViewInspect; m.InspectData = inspect; m.InspectScroll = 50 },
+		"help":    func(m *Model) { m.HelpMode = true; m.HelpScroll = 5 },
+		"confirm": func(m *Model) { m.Confirm = &Confirm{Prompt: "Delete " + strings.Repeat("x", 300) + "?"} },
+		"status":  func(m *Model) { m.Status = strings.Repeat("long status\n", 40) },
+		"empty":   func(m *Model) { m.Items = nil },
 	}
 	sizes := [][2]int{{50, 12}, {80, 24}, {121, 37}, {250, 60}}
 

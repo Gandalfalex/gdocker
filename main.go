@@ -4,21 +4,18 @@ import (
 	"fmt"
 	"os"
 
-	"gdocker/docker"
-	_ "gdocker/ui" // Import for side effects (init function)
-
 	tea "charm.land/bubbletea/v2"
+
+	"gdocker/app"
 )
 
 func main() {
-	m, err := docker.InitialModel()
+	m, err := app.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

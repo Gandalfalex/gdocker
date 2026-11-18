@@ -1,4 +1,4 @@
-package models
+package app
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"gdocker/config"
 
 	tea "charm.land/bubbletea/v2"
+	"gdocker/models"
 )
 
 func feed(t *testing.T, m Model, msgs ...tea.Msg) (Model, tea.Cmd) {
@@ -19,24 +20,21 @@ func feed(t *testing.T, m Model, msgs ...tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func containerModel(cs ...*Container) Model {
+func containerModel(cs ...*models.Container) Model {
 	cfg := config.DefaultAppConfig()
 	m := Model{KeyBindings: &cfg.KeyBindings, Height: 40}
 	for _, c := range cs {
-		m.Items = append(m.Items, ListItem{IsContainer: true, Container: c})
+		m.Items = append(m.Items, models.ListItem{IsContainer: true, Container: c})
 	}
 	return m
 }
 
 func TestDeleteAsksForConfirmation(t *testing.T) {
-	orig := DeleteContainerFunc
-	t.Cleanup(func() { DeleteContainerFunc = orig })
 	deleted := false
-	DeleteContainerFunc = func(*Model) tea.Cmd {
+	m := containerModel(&models.Container{Name: "api", State: "running"})
+	m.Backend = &fakeBackend{delete: func(*models.Container) tea.Cmd {
 		return func() tea.Msg { deleted = true; return nil }
-	}
-
-	m := containerModel(&Container{Name: "api", State: "running"})
+	}}
 
 	// Any key but y cancels.
 	got, cmd := feed(t, m, runes("d"))
@@ -55,11 +53,8 @@ func TestDeleteAsksForConfirmation(t *testing.T) {
 }
 
 func TestHelpSwallowsActionKeys(t *testing.T) {
-	orig := DeleteContainerFunc
-	t.Cleanup(func() { DeleteContainerFunc = orig })
-	DeleteContainerFunc = func(*Model) tea.Cmd { return func() tea.Msg { return nil } }
-
-	m := containerModel(&Container{Name: "api"}, &Container{Name: "db"})
+	m := containerModel(&models.Container{Name: "api"}, &models.Container{Name: "db"})
+	m.Backend = &fakeBackend{delete: func(*models.Container) tea.Cmd { return func() tea.Msg { return nil } }}
 	got, _ := feed(t, m, runes("?"), runes("d"), runes("j"))
 	if !got.HelpMode || got.Confirm != nil || got.Cursor != 0 {
 		t.Fatalf("help should swallow keys: help=%v confirm=%v cursor=%d", got.HelpMode, got.Confirm, got.Cursor)
@@ -71,56 +66,40 @@ func TestHelpSwallowsActionKeys(t *testing.T) {
 }
 
 func TestStatusMessageExpires(t *testing.T) {
-	m := containerModel(&Container{Name: "api"})
-	got, cmd := feed(t, m, ActionResultMsg{Message: "boom", Success: false})
-	if !got.StatusError || cmd == nil {
-		t.Fatalf("expected error status with clear timer: err=%v cmd=%v", got.StatusError, cmd)
+	m := containerModel(&models.Container{Name: "api"})
+	got, cmd := feed(t, m, models.ActionResultMsg{Message: "boom", Success: false})
+	if !got.StatusErr || cmd == nil || got.StatusTTL == 0 {
+		t.Fatalf("expected error status with clear timer: err=%v cmd=%v ttl=%v", got.StatusErr, cmd, got.StatusTTL)
 	}
-
-	// A timer of an older message must not clear a newer one.
-	got, _ = feed(t, got, statusClearMsg{seq: got.statusSeq - 1})
-	if got.StatusMessage != "boom" {
-		t.Fatalf("stale timer cleared status")
-	}
-	got, _ = feed(t, got, statusClearMsg{seq: got.statusSeq})
-	if got.StatusMessage != "" {
-		t.Fatalf("status not cleared: %q", got.StatusMessage)
+	// (tuikit's tests cover the timer itself, stale ones included)
+	if got.Expire("boom") != nil {
+		t.Fatal("the same message again starts another timer")
 	}
 }
 
 func TestRefreshKeepsCursorOnSelectedContainer(t *testing.T) {
-	origGroup, origRebuild := GroupByProjectFunc, RebuildItemsFunc
-	t.Cleanup(func() { GroupByProjectFunc, RebuildItemsFunc = origGroup, origRebuild })
-	GroupByProjectFunc = func(cs []Container) ([]Container, []ComposeGroup) { return cs, nil }
-	RebuildItemsFunc = func(m *Model) {
-		m.Items = nil
-		for i := range m.Standalone {
-			m.Items = append(m.Items, ListItem{IsContainer: true, Container: &m.Standalone[i]})
-		}
-	}
-
-	m := containerModel(&Container{Name: "api"}, &Container{Name: "db"})
+	m := containerModel(&models.Container{Name: "api"}, &models.Container{Name: "db"})
 	m.Cursor = 1 // db
-	got, _ := feed(t, m, ContainersRefreshedMsg{Containers: []Container{{Name: "cache"}, {Name: "db"}, {Name: "api"}}})
+	got, _ := feed(t, m, models.ContainersRefreshedMsg{Containers: []models.Container{{Name: "cache"}, {Name: "db"}, {Name: "api"}}})
 	if c := got.SelectedContainer(); c == nil || c.Name != "db" {
 		t.Fatalf("cursor moved off db: %+v", c)
 	}
 }
 
 func TestStaleResultsDoNotSwitchView(t *testing.T) {
-	m := containerModel(&Container{Name: "api"})
+	m := containerModel(&models.Container{Name: "api"})
 	got, _ := feed(t, m,
-		LogsLoadedMsg{Lines: []string{"x"}},
-		InspectLoadedMsg{Data: "{}"},
-		StatsLoadedMsg{Stats: &ContainerStats{}, Seq: 7},
+		models.LogsLoadedMsg{Lines: []string{"x"}},
+		models.InspectLoadedMsg{Data: "{}"},
+		models.StatsLoadedMsg{Stats: &models.ContainerStats{}, Seq: 7},
 	)
-	if got.ViewMode != ViewDetails {
+	if got.ViewMode != models.ViewDetails {
 		t.Fatalf("late result switched view to %v", got.ViewMode)
 	}
 }
 
 func TestMotionsScrollDetailViewNotList(t *testing.T) {
-	m := containerModel(&Container{Name: "api", Env: []string{"A=1", "B=2", "C=3"}, EnvLoaded: true}, &Container{Name: "db"})
+	m := containerModel(&models.Container{Name: "api", Env: []string{"A=1", "B=2", "C=3"}, EnvLoaded: true}, &models.Container{Name: "db"})
 	got, _ := feed(t, m, runes("v"), runes("j"), runes("j"))
 	if got.Cursor != 0 || got.EnvScroll != 2 {
 		t.Fatalf("env view: cursor=%d scroll=%d", got.Cursor, got.EnvScroll)
@@ -135,24 +114,20 @@ func TestCommandInputTextSpaceAndPaste(t *testing.T) {
 		tea.KeyPressMsg{Code: 'ü', Text: "ü"},
 		tea.PasteMsg{Content: "host\n"},
 	)
-	if got.CommandInput != "ssh ühost" {
-		t.Fatalf("command input %q", got.CommandInput)
+	if got.prompt.Value() != "ssh ühost" {
+		t.Fatalf("command input %q", got.prompt.Value())
 	}
 	got, _ = feed(t, got, tea.KeyPressMsg{Code: tea.KeyBackspace}, tea.KeyPressMsg{Code: tea.KeyBackspace},
 		tea.KeyPressMsg{Code: tea.KeyBackspace}, tea.KeyPressMsg{Code: tea.KeyBackspace}, tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if got.CommandInput != "ssh " {
-		t.Fatalf("backspace should remove whole runes, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh " {
+		t.Fatalf("backspace should remove whole runes, got %q", got.prompt.Value())
 	}
 }
 
 func TestSpaceTogglesProject(t *testing.T) {
-	orig := RebuildItemsFunc
-	t.Cleanup(func() { RebuildItemsFunc = orig })
-	RebuildItemsFunc = func(*Model) {}
-
 	cfg := config.DefaultAppConfig()
-	m := Model{KeyBindings: &cfg.KeyBindings, Projects: []ComposeGroup{{Name: "web"}}}
-	m.Items = []ListItem{{IsProject: true, Project: &m.Projects[0]}}
+	m := Model{KeyBindings: &cfg.KeyBindings, Projects: []models.ComposeGroup{{Name: "web"}}}
+	m.Items = []models.ListItem{{IsProject: true, Project: &m.Projects[0]}}
 	feed(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	if !m.Projects[0].Expanded {
 		t.Fatal("space should expand the project")
@@ -161,7 +136,7 @@ func TestSpaceTogglesProject(t *testing.T) {
 
 func TestListKeepsScrollOffset(t *testing.T) {
 	cfg := config.DefaultAppConfig()
-	m := Model{KeyBindings: &cfg.KeyBindings, Items: make([]ListItem, 100), Height: 29} // 20 rows
+	m := Model{KeyBindings: &cfg.KeyBindings, Items: make([]models.ListItem, 100), Height: 29} // 20 rows
 
 	// Moving inside the window must not scroll it (no re-centering).
 	got, _ := feed(t, m, runes("5"), runes("0"), runes("j")) // 1-4 switch lists, so no 30j
@@ -192,34 +167,30 @@ func TestListKeepsScrollOffset(t *testing.T) {
 }
 
 func TestCommandLineCompletionHistoryAndLineJump(t *testing.T) {
-	origQuit := QuitFunc
-	t.Cleanup(func() { QuitFunc = origQuit })
-	QuitFunc = func(*Model) {}
-
 	cfg := config.DefaultAppConfig()
-	m := Model{KeyBindings: &cfg.KeyBindings, Items: make([]ListItem, 100), Height: 29}
+	m := Model{KeyBindings: &cfg.KeyBindings, Items: make([]models.ListItem, 100), Height: 29}
 	tab := tea.KeyPressMsg{Code: tea.KeyTab}
 	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
 	up := tea.KeyPressMsg{Code: tea.KeyUp}
 
 	// Command names complete and cycle; a lone match moves on to its argument.
 	got, _ := feed(t, m, runes(":"), runes("s"), tab)
-	if got.CommandInput != "start" {
-		t.Fatalf("first candidate for s: %q", got.CommandInput)
+	if got.prompt.Value() != "start" {
+		t.Fatalf("first candidate for s: %q", got.prompt.Value())
 	}
 	got, _ = feed(t, got, tab)
-	if got.CommandInput != "stop" {
-		t.Fatalf("second candidate for s: %q", got.CommandInput)
+	if got.prompt.Value() != "stop" {
+		t.Fatalf("second candidate for s: %q", got.prompt.Value())
 	}
 	got, _ = feed(t, m, runes(":"), runes("s"), runes("s"), tab, tab)
-	if got.CommandInput != "ssh " {
-		t.Fatalf("ssh should complete to its argument, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh " {
+		t.Fatalf("ssh should complete to its argument, got %q", got.prompt.Value())
 	}
 
 	// :42 jumps to line 42, a unique prefix runs its command, and both are
 	// kept in the history.
 	got, _ = feed(t, m, runes(":"), runes("4"), runes("2"), enter)
-	if got.Cursor != 41 || got.CommandMode {
+	if got.Cursor != 41 || got.commandOpen() {
 		t.Fatalf(":42: cursor %d", got.Cursor)
 	}
 	got, _ = feed(t, got, runes(":"), runes("h"), runes("e"), runes("l"), enter)
@@ -227,12 +198,12 @@ func TestCommandLineCompletionHistoryAndLineJump(t *testing.T) {
 		t.Fatal(":hel should open help")
 	}
 	got, _ = feed(t, got, tea.KeyPressMsg{Code: tea.KeyEscape}, runes(":"), up, up)
-	if got.CommandInput != "42" {
-		t.Fatalf("history: %q", got.CommandInput)
+	if got.prompt.Value() != "42" {
+		t.Fatalf("history: %q", got.prompt.Value())
 	}
 
 	got, _ = feed(t, m, runes(":"), runes("x"), runes("y"), enter)
-	if !got.StatusError || got.StatusMessage == "" {
-		t.Fatalf("unknown command should report an error: %q", got.StatusMessage)
+	if !got.StatusErr || got.Status == "" {
+		t.Fatalf("unknown command should report an error: %q", got.Status)
 	}
 }

@@ -1,4 +1,4 @@
-package models
+package app
 
 import (
 	"testing"
@@ -8,98 +8,64 @@ import (
 	"gdocker/ui/logviewer"
 
 	tea "charm.land/bubbletea/v2"
+	"gdocker/docker"
+	"gdocker/models"
 )
 
 func TestUpdateContainersRefreshedSetsRecreatedStatus(t *testing.T) {
-	origGroup := GroupByProjectFunc
-	origRebuild := RebuildItemsFunc
-	t.Cleanup(func() {
-		GroupByProjectFunc = origGroup
-		RebuildItemsFunc = origRebuild
-	})
-
-	GroupByProjectFunc = func(cs []Container) ([]Container, []ComposeGroup) {
-		return cs, nil
-	}
-	RebuildItemsFunc = func(*Model) {}
-
 	m := Model{}
-	gotModel, _ := m.Update(ContainersRefreshedMsg{
-		Containers: []Container{},
-		Recreated: []ContainerRecreated{
+	gotModel, _ := m.Update(models.ContainersRefreshedMsg{
+		Containers: []models.Container{},
+		Recreated: []models.ContainerRecreated{
 			{Name: "api", OldID: "123456789012aaaa", NewID: "abcdef123456bbbb"},
 		},
 	})
 
 	got := gotModel.(Model)
 	want := "Container recreated: api (123456789012 -> abcdef123456)"
-	if got.StatusMessage != want {
-		t.Fatalf("status message mismatch:\nwant: %q\ngot:  %q", want, got.StatusMessage)
+	if got.Status != want {
+		t.Fatalf("status message mismatch:\nwant: %q\ngot:  %q", want, got.Status)
 	}
 }
 
 func TestUpdateContainersRefreshedTriggersEnvLoadInEnvView(t *testing.T) {
-	origGroup := GroupByProjectFunc
-	origRebuild := RebuildItemsFunc
-	origLoadEnv := LoadEnvFunc
-	t.Cleanup(func() {
-		GroupByProjectFunc = origGroup
-		RebuildItemsFunc = origRebuild
-		LoadEnvFunc = origLoadEnv
-	})
-
-	GroupByProjectFunc = func(cs []Container) ([]Container, []ComposeGroup) {
-		return cs, nil
-	}
-	RebuildItemsFunc = func(m *Model) {
-		if len(m.Containers) == 0 {
-			m.Items = nil
-			return
-		}
-		m.Items = []ListItem{{IsContainer: true, Container: &m.Containers[0]}}
-	}
-	LoadEnvFunc = func(m *Model) tea.Cmd {
-		id := ""
-		if len(m.Items) > 0 && m.Items[0].Container != nil {
-			id = m.Items[0].Container.ID
-		}
-		return func() tea.Msg {
-			return EnvLoadedMsg{ContainerID: id, Env: []string{"A=B"}}
-		}
-	}
+	fake := &fakeBackend{loadEnv: func(c *models.Container) tea.Cmd {
+		return func() tea.Msg { return models.EnvLoadedMsg{ContainerID: c.ID, Env: []string{"A=B"}} }
+	}}
 
 	m := Model{
-		ViewMode: ViewEnv,
+		ViewMode: models.ViewEnv,
 		Cursor:   0,
+		Backend:  fake,
 	}
 
-	gotModel, cmd := m.Update(ContainersRefreshedMsg{
-		Containers: []Container{{ID: "abc", FullID: "abc", Name: "api", EnvLoaded: false}},
+	gotModel, cmd := m.Update(models.ContainersRefreshedMsg{
+		Containers: []models.Container{{ID: "abc", FullID: "abc", Name: "api", EnvLoaded: false}},
 	})
 
 	got := gotModel.(Model)
 	if cmd == nil {
 		t.Fatalf("expected non-nil load env command")
 	}
-	if got.StatusMessage != "Loading environment variables..." {
-		t.Fatalf("unexpected status message: %q", got.StatusMessage)
+	if got.Status != "Loading environment variables..." {
+		t.Fatalf("unexpected status message: %q", got.Status)
 	}
 }
 
 func TestApplyContainerEnvUpdatesAllCollections(t *testing.T) {
 	targetID := "full-123"
 	m := Model{
-		Containers: []Container{
+		Containers: []models.Container{
 			{ID: "short-a", FullID: targetID},
 			{ID: "short-b", FullID: "other"},
 		},
-		Standalone: []Container{
+		Standalone: []models.Container{
 			{ID: "short-c", FullID: targetID},
 		},
-		Projects: []ComposeGroup{
+		Projects: []models.ComposeGroup{
 			{
 				Name: "proj",
-				Containers: []Container{
+				Containers: []models.Container{
 					{ID: "short-d", FullID: targetID},
 				},
 			},
@@ -124,32 +90,28 @@ func TestUpdateEnterCommandModeFromLogs(t *testing.T) {
 	cfg := config.DefaultAppConfig()
 	m := Model{
 		KeyBindings: &cfg.KeyBindings,
-		ViewMode:    ViewLogs,
+		ViewMode:    models.ViewLogs,
 		LogViewer:   logviewer.New(&cfg.KeyBindings.Logs, true, true, nil),
 	}
 
 	gotModel, _ := m.Update(tea.KeyPressMsg{Code: ':', Text: ":"})
 	got := gotModel.(Model)
 
-	if !got.CommandMode {
+	if !got.commandOpen() {
 		t.Fatalf("expected command mode to be enabled")
 	}
-	if got.CommandInput != "" {
-		t.Fatalf("expected empty command input, got %q", got.CommandInput)
+	if got.prompt.Value() != "" {
+		t.Fatalf("expected empty command input, got %q", got.prompt.Value())
 	}
 }
 
 func TestUpdateStopsFollowerWhenToggledOff(t *testing.T) {
 	cfg := config.DefaultAppConfig()
-	origStop := StopFollowLogsFunc
-	t.Cleanup(func() { StopFollowLogsFunc = origStop })
-
 	stopped := false
-	StopFollowLogsFunc = func(*Model) { stopped = true }
-
 	m := Model{
+		Backend:     &fakeBackend{stopFollow: func() { stopped = true }},
 		KeyBindings: &cfg.KeyBindings,
-		ViewMode:    ViewLogs,
+		ViewMode:    models.ViewLogs,
 		LogViewer:   logviewer.New(&cfg.KeyBindings.Logs, true, true, nil),
 	}
 	m.LogViewer.FollowingLogs = true
@@ -161,38 +123,36 @@ func TestUpdateStopsFollowerWhenToggledOff(t *testing.T) {
 		t.Fatalf("expected following to be disabled")
 	}
 	if !stopped {
-		t.Fatalf("expected StopFollowLogsFunc to be called")
+		t.Fatalf("expected the follower to be stopped")
 	}
 }
 
 func TestUpdateLogsLoadedStartsFollowAndSetsContainerName(t *testing.T) {
-	origFollow := FollowLogsFunc
-	t.Cleanup(func() { FollowLogsFunc = origFollow })
-
 	followCalls := 0
-	FollowLogsFunc = func(*Model) tea.Cmd {
+	fake := &fakeBackend{follow: func(*models.Container, time.Time) tea.Cmd {
 		followCalls++
 		return func() tea.Msg { return nil }
-	}
+	}}
 
 	since := time.Unix(1700000000, 123)
-	c := Container{Name: "api"}
+	c := models.Container{Name: "api"}
 	m := Model{
+		Backend:  fake,
 		Cursor:   0,
-		ViewMode: ViewLogs, // set as soon as logs are requested
-		Items: []ListItem{
+		ViewMode: models.ViewLogs, // set as soon as logs are requested
+		Items: []models.ListItem{
 			{IsContainer: true, Container: &c},
 		},
 	}
 
-	gotModel, cmd := m.Update(LogsLoadedMsg{
+	gotModel, cmd := m.Update(models.LogsLoadedMsg{
 		Lines:  []string{"one", "two"},
 		Follow: true,
 		Since:  since,
 	})
 	got := gotModel.(Model)
 
-	if got.ViewMode != ViewLogs {
+	if got.ViewMode != models.ViewLogs {
 		t.Fatalf("expected view mode logs, got %v", got.ViewMode)
 	}
 	if got.LogViewer.ContainerName != "api" {
@@ -213,17 +173,16 @@ func TestUpdateLogsLoadedStartsFollowAndSetsContainerName(t *testing.T) {
 }
 
 func TestUpdateLogsFollowedChainsForRapidBurstsWhenFollowing(t *testing.T) {
-	origFollow := FollowLogsFunc
-	t.Cleanup(func() { FollowLogsFunc = origFollow })
-
 	followCalls := 0
-	FollowLogsFunc = func(*Model) tea.Cmd {
+	fake := &fakeBackend{follow: func(*models.Container, time.Time) tea.Cmd {
 		followCalls++
 		return func() tea.Msg { return nil }
-	}
+	}}
 
 	m := Model{
-		ViewMode: ViewLogs,
+		Backend:  fake,
+		ViewMode: models.ViewLogs,
+		Items:    []models.ListItem{{IsContainer: true, Container: &models.Container{Name: "api"}}},
 		LogViewer: logviewer.Model{
 			Lines:         []string{"seed"},
 			FollowingLogs: true,
@@ -231,7 +190,7 @@ func TestUpdateLogsFollowedChainsForRapidBurstsWhenFollowing(t *testing.T) {
 	}
 
 	since1 := time.Unix(1700000001, 0)
-	gotModel, cmd := m.Update(LogsFollowedMsg{
+	gotModel, cmd := m.Update(models.LogsFollowedMsg{
 		Lines: []string{"dup", "dup"},
 		Since: since1,
 	})
@@ -251,7 +210,7 @@ func TestUpdateLogsFollowedChainsForRapidBurstsWhenFollowing(t *testing.T) {
 	}
 
 	since2 := time.Unix(1700000002, 0)
-	gotModel2, cmd2 := got.Update(LogsFollowedMsg{
+	gotModel2, cmd2 := got.Update(models.LogsFollowedMsg{
 		Lines: []string{"next"},
 		Since: since2,
 	})
@@ -272,24 +231,23 @@ func TestUpdateLogsFollowedChainsForRapidBurstsWhenFollowing(t *testing.T) {
 }
 
 func TestUpdateLogsFollowedDoesNotChainWhenFollowDisabled(t *testing.T) {
-	origFollow := FollowLogsFunc
-	t.Cleanup(func() { FollowLogsFunc = origFollow })
-
 	followCalls := 0
-	FollowLogsFunc = func(*Model) tea.Cmd {
+	fake := &fakeBackend{follow: func(*models.Container, time.Time) tea.Cmd {
 		followCalls++
 		return func() tea.Msg { return nil }
-	}
+	}}
 
 	m := Model{
-		ViewMode: ViewLogs,
+		Backend:  fake,
+		ViewMode: models.ViewLogs,
+		Items:    []models.ListItem{{IsContainer: true, Container: &models.Container{Name: "api"}}},
 		LogViewer: logviewer.Model{
 			Lines:         []string{"seed"},
 			FollowingLogs: false,
 		},
 	}
 
-	gotModel, cmd := m.Update(LogsFollowedMsg{
+	gotModel, cmd := m.Update(models.LogsFollowedMsg{
 		Lines: []string{"one"},
 		Since: time.Unix(1700000003, 0),
 	})
@@ -307,26 +265,24 @@ func TestUpdateLogsFollowedDoesNotChainWhenFollowDisabled(t *testing.T) {
 }
 
 func TestExecuteCommandSSHResolvesAlias(t *testing.T) {
-	origConnect := ConnectDockerHostFunc
 	origResolver := sshConfigHostEndpointResolver
-	t.Cleanup(func() { ConnectDockerHostFunc = origConnect })
 	t.Cleanup(func() { sshConfigHostEndpointResolver = origResolver })
 
 	called := false
 	var gotHost string
-	ConnectDockerHostFunc = func(_ *Model, host string) tea.Cmd {
+	fake := &fakeBackend{connect: func(host string) tea.Cmd {
 		called = true
 		gotHost = host
 		return nil
-	}
+	}}
 	sshConfigHostEndpointResolver = func(string) (string, bool) { return "", false }
 
 	m := &Model{
-		HostAliases:  map[string]string{"orangepi": "ssh://pi@orangepi"},
-		CommandInput: "ssh orangepi",
+		Backend:     fake,
+		HostAliases: map[string]string{"orangepi": "ssh://pi@orangepi"},
 	}
 
-	_ = executeCommand(m)
+	_ = executeCommand(m, "ssh orangepi")
 	if !called {
 		t.Fatalf("expected connect function to be called")
 	}
@@ -336,20 +292,18 @@ func TestExecuteCommandSSHResolvesAlias(t *testing.T) {
 }
 
 func TestExecuteCommandSSHPrefixesBareHost(t *testing.T) {
-	origConnect := ConnectDockerHostFunc
 	origResolver := sshConfigHostEndpointResolver
-	t.Cleanup(func() { ConnectDockerHostFunc = origConnect })
 	t.Cleanup(func() { sshConfigHostEndpointResolver = origResolver })
 
 	var gotHost string
-	ConnectDockerHostFunc = func(_ *Model, host string) tea.Cmd {
+	fake := &fakeBackend{connect: func(host string) tea.Cmd {
 		gotHost = host
 		return nil
-	}
+	}}
 	sshConfigHostEndpointResolver = func(string) (string, bool) { return "", false }
 
-	m := &Model{CommandInput: "ssh orangepi.local"}
-	_ = executeCommand(m)
+	m := &Model{Backend: fake}
+	_ = executeCommand(m, "ssh orangepi.local")
 
 	if gotHost != "ssh://orangepi.local" {
 		t.Fatalf("expected ssh:// prefix, got %q", gotHost)
@@ -357,20 +311,18 @@ func TestExecuteCommandSSHPrefixesBareHost(t *testing.T) {
 }
 
 func TestExecuteCommandSSHLocalUsesEmptyHost(t *testing.T) {
-	origConnect := ConnectDockerHostFunc
 	origResolver := sshConfigHostEndpointResolver
-	t.Cleanup(func() { ConnectDockerHostFunc = origConnect })
 	t.Cleanup(func() { sshConfigHostEndpointResolver = origResolver })
 
 	var gotHost string
-	ConnectDockerHostFunc = func(_ *Model, host string) tea.Cmd {
+	fake := &fakeBackend{connect: func(host string) tea.Cmd {
 		gotHost = host
 		return nil
-	}
+	}}
 	sshConfigHostEndpointResolver = func(string) (string, bool) { return "", false }
 
-	m := &Model{CommandInput: "ssh local"}
-	_ = executeCommand(m)
+	m := &Model{Backend: fake}
+	_ = executeCommand(m, "ssh local")
 
 	if gotHost != "" {
 		t.Fatalf("expected empty host for local, got %q", gotHost)
@@ -378,16 +330,14 @@ func TestExecuteCommandSSHLocalUsesEmptyHost(t *testing.T) {
 }
 
 func TestExecuteCommandSSHPrefersSSHConfigHostAlias(t *testing.T) {
-	origConnect := ConnectDockerHostFunc
 	origResolver := sshConfigHostEndpointResolver
-	t.Cleanup(func() { ConnectDockerHostFunc = origConnect })
 	t.Cleanup(func() { sshConfigHostEndpointResolver = origResolver })
 
 	var gotHost string
-	ConnectDockerHostFunc = func(_ *Model, host string) tea.Cmd {
+	fake := &fakeBackend{connect: func(host string) tea.Cmd {
 		gotHost = host
 		return nil
-	}
+	}}
 	sshConfigHostEndpointResolver = func(alias string) (string, bool) {
 		if alias != "orangepi" {
 			return "", false
@@ -396,10 +346,10 @@ func TestExecuteCommandSSHPrefersSSHConfigHostAlias(t *testing.T) {
 	}
 
 	m := &Model{
-		HostAliases:  map[string]string{"orangepi": "ssh://override@other"},
-		CommandInput: "ssh orangepi",
+		Backend:     fake,
+		HostAliases: map[string]string{"orangepi": "ssh://override@other"},
 	}
-	_ = executeCommand(m)
+	_ = executeCommand(m, "ssh orangepi")
 
 	if gotHost != "ssh://orangepi" {
 		t.Fatalf("expected ssh config alias to win, got %q", gotHost)
@@ -407,50 +357,31 @@ func TestExecuteCommandSSHPrefersSSHConfigHostAlias(t *testing.T) {
 }
 
 func TestUpdateDockerConnectedMsgRebuildsCurrentNavAndSetsStatus(t *testing.T) {
-	origGroup := GroupByProjectFunc
-	origRebuildVolumes := RebuildVolumeItemsFunc
-	t.Cleanup(func() {
-		GroupByProjectFunc = origGroup
-		RebuildVolumeItemsFunc = origRebuildVolumes
-	})
-
-	GroupByProjectFunc = func(cs []Container) ([]Container, []ComposeGroup) {
-		return cs, nil
-	}
-
-	rebuiltVolumes := false
-	RebuildVolumeItemsFunc = func(m *Model) {
-		rebuiltVolumes = true
-		m.Items = []ListItem{{IsVolume: true}}
-	}
-
 	m := Model{
-		NavMode:       NavVolumes,
-		ViewMode:      ViewLogs,
-		StatusMessage: "old",
+		NavMode:  models.NavVolumes,
+		ViewMode: models.ViewLogs,
 	}
+	m.Status = "old"
 
-	gotModel, _ := m.Update(DockerConnectedMsg{
-		Client:     nil,
-		Host:       "ssh://pi@orangepi",
-		Containers: []Container{{ID: "c1"}},
-		Volumes:    []Volume{{Name: "vol1"}},
-		Images:     []Image{{ID: "img1"}},
-		Networks:   []Network{{ID: "net1"}},
-	})
+	gotModel, _ := m.Update(docker.ConnectedMsg{Host: "ssh://pi@orangepi", Snapshot: docker.Snapshot{
+		Containers: []models.Container{{ID: "c1"}},
+		Volumes:    []models.Volume{{Name: "vol1"}},
+		Images:     []models.Image{{ID: "img1"}},
+		Networks:   []models.Network{{ID: "net1"}},
+	}})
 	got := gotModel.(Model)
 
-	if !rebuiltVolumes {
-		t.Fatalf("expected volume rebuild for nav mode volumes")
+	if len(got.Items) != 1 || !got.Items[0].IsVolume {
+		t.Fatalf("expected the volume list for nav mode volumes, got %+v", got.Items)
 	}
-	if got.ViewMode != ViewDetails {
+	if got.ViewMode != models.ViewDetails {
 		t.Fatalf("expected view mode details, got %v", got.ViewMode)
 	}
 	if got.DockerHost != "ssh://pi@orangepi" {
 		t.Fatalf("unexpected docker host: %q", got.DockerHost)
 	}
-	if got.StatusMessage != "Connected to ssh://pi@orangepi" {
-		t.Fatalf("unexpected status message: %q", got.StatusMessage)
+	if got.Status != "Connected to ssh://pi@orangepi" {
+		t.Fatalf("unexpected status message: %q", got.Status)
 	}
 }
 
@@ -462,30 +393,28 @@ func TestCommandModeTabCompletesSSHAndCyclesMatches(t *testing.T) {
 		return []string{"orangepi", "office"}
 	}
 
-	m := Model{
-		CommandMode:  true,
-		CommandInput: "ssh o",
+	m := withCommand(Model{
 		HostAliases: map[string]string{
 			"orbit": "ssh://orbit",
 		},
-	}
+	}, "ssh o")
 
 	gotModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := gotModel.(Model)
-	if got.CommandInput != "ssh office" {
-		t.Fatalf("expected first completion ssh office, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh office" {
+		t.Fatalf("expected first completion ssh office, got %q", got.prompt.Value())
 	}
 
 	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
-	if got.CommandInput != "ssh orangepi" {
-		t.Fatalf("expected second completion ssh orangepi, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh orangepi" {
+		t.Fatalf("expected second completion ssh orangepi, got %q", got.prompt.Value())
 	}
 
 	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
-	if got.CommandInput != "ssh orbit" {
-		t.Fatalf("expected third completion ssh orbit, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh orbit" {
+		t.Fatalf("expected third completion ssh orbit, got %q", got.prompt.Value())
 	}
 }
 
@@ -497,27 +426,24 @@ func TestCommandModeTabResetsCompletionAfterTyping(t *testing.T) {
 		return []string{"orangepi", "office"}
 	}
 
-	m := Model{
-		CommandMode:  true,
-		CommandInput: "ssh o",
-	}
+	m := withCommand(Model{}, "ssh o")
 
 	gotModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := gotModel.(Model)
-	if got.CommandInput != "ssh office" {
-		t.Fatalf("expected first completion ssh office, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh office" {
+		t.Fatalf("expected first completion ssh office, got %q", got.prompt.Value())
 	}
 
 	gotModel, _ = got.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	got = gotModel.(Model)
-	if got.CommandInput != "ssh officex" {
-		t.Fatalf("expected typed suffix to append, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh officex" {
+		t.Fatalf("expected typed suffix to append, got %q", got.prompt.Value())
 	}
 
 	// Now tab should use the new prefix and not cycle old matches.
 	gotModel, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got = gotModel.(Model)
-	if got.CommandInput != "ssh officex" {
-		t.Fatalf("expected no completion for unmatched prefix, got %q", got.CommandInput)
+	if got.prompt.Value() != "ssh officex" {
+		t.Fatalf("expected no completion for unmatched prefix, got %q", got.prompt.Value())
 	}
 }

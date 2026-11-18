@@ -1,4 +1,4 @@
-package ui
+package app
 
 import (
 	"fmt"
@@ -9,18 +9,13 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	tk "github.com/Gandalfalex/tuikit"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type helpEntry struct {
 	key  string
 	desc string
-}
-
-func init() {
-	// Set function pointers to avoid circular imports
-	models.RenderViewFunc = RenderView
-	models.HelpScrollRangeFunc = helpScrollRange
 }
 
 const (
@@ -43,7 +38,7 @@ func clip(content string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func RenderView(m *models.Model) string {
+func RenderView(m *Model) string {
 	if m.Width == 0 {
 		return "Loading..."
 	}
@@ -61,7 +56,7 @@ func RenderView(m *models.Model) string {
 	}
 
 	// Panels are drawn with a border; their content gets the inner size.
-	leftOuter := models.ListPaneWidth(m.Width)
+	leftOuter := ListPaneWidth(m.Width)
 	rightOuter := m.Width - leftOuter
 	leftWidth, rightWidth := leftOuter-2, rightOuter-2
 	innerHeight := m.Height - 5 // header, status bar, hints and borders
@@ -106,113 +101,99 @@ func RenderView(m *models.Model) string {
 		panel(left, leftOuter, leftBorder),
 		panel(right, rightOuter, rightBorder))
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, panels, footer)
+	body := header + "\n" + panels + "\n"
+	if m.commandOpen() {
+		// the completion menu covers the bottom of the panels, like vim's
+		body = tk.Overlay(body, tk.Popup(theme(m), &m.cmd.Line, m.Width, 10), false)
+	}
+	return body + footer
 }
 
 // renderStatusBar renders the bar above the hints: a badge with the input
 // mode, then either the line being typed or the state of the current view.
-func renderStatusBar(m *models.Model) string {
-	bar := lipgloss.NewStyle().Background(lipgloss.Color(ColorBackground))
-	seg := func(color, text string) string {
-		return bar.Foreground(lipgloss.Color(color)).Render(text)
-	}
-	badge := func(color, name string) string {
-		return lipgloss.NewStyle().Bold(true).Padding(0, 1).
-			Foreground(lipgloss.Color(ColorOnAccent)).Background(lipgloss.Color(color)).Render(name)
-	}
+func renderStatusBar(m *Model) string {
+	th, w := theme(m), m.Width
 	logs := m.ViewMode == models.ViewLogs && !m.HelpMode
-
-	var line string
 	switch {
 	case m.Confirm != nil:
-		line = badge(ColorError, "CONFIRM") + seg(ColorForeground, " "+m.Confirm.Prompt)
-	case m.CommandMode:
-		line = badge(ColorInfo, "COMMAND") + seg(ColorForeground, " :"+m.CommandInput+IconInputCursor)
+		return tk.StatusBar(th, w, modeConfirm, []string{m.Confirm.Prompt})
+	case m.commandOpen():
+		return tk.PromptBar(th, w, tk.ModeCommand, m.prompt.Input)
 	case logs && m.LogViewer.IsSearchMode():
-		line = badge(ColorWarning, "SEARCH") + seg(ColorForeground, " "+m.LogViewer.SearchPrompt()+IconInputCursor)
-	default:
-		mode, color := "NORMAL", ColorPrimary
-		switch {
-		case m.HelpMode:
-			mode, color = "HELP", ColorSuccess
-		case logs && m.LogViewer.Sel.Mode == logviewer.VisualLine:
-			mode, color = "V-LINE", ColorNetwork
-		case logs && m.LogViewer.Sel.Mode == logviewer.VisualChar:
-			mode, color = "VISUAL", ColorNetwork
-		}
-
-		host := "local"
-		if m.DockerHost != "" {
-			host = m.DockerHost
-		}
-		parts := []string{seg(ColorForeground, host)}
-		if !m.HelpMode {
-			parts = append(parts, seg(ColorForeground, navModeLabel(m.NavMode)))
-			if n := len(m.Items); n > 0 {
-				parts = append(parts, seg(ColorForeground, fmt.Sprintf("%d/%d", m.Cursor+1, n)))
-			}
-		}
-		if logs && m.LogViewer.FollowingLogs {
-			parts = append(parts, seg(ColorSuccess, "following"))
-		}
-		partial := m.Keys.Partial()
-		if logs {
-			partial = m.LogViewer.Partial()
-		}
-		if partial != "" {
-			parts = append(parts, seg(ColorWarning, partial))
-		}
-		if m.StatusMessage != "" {
-			color := ColorForeground
-			if m.StatusError {
-				color = ColorError
-			}
-			parts = append(parts, seg(color, strings.ReplaceAll(m.StatusMessage, "\n", " ")))
-		}
-		line = badge(color, mode) + seg("", " ") + strings.Join(parts, seg(ColorMuted, " │ "))
+		return tk.StatusBar(th, w, tk.ModeSearch, []string{m.LogViewer.SearchPrompt() + IconInputCursor})
 	}
+	mode := tk.ModeNormal
+	switch {
+	case m.HelpMode:
+		mode = modeHelp
+	case logs && m.LogViewer.Sel.Mode == logviewer.VisualLine:
+		mode = tk.ModeVLine
+	case logs && m.LogViewer.Sel.Mode == logviewer.VisualChar:
+		mode = tk.ModeVisual
+	}
+	host := "local"
+	if m.DockerHost != "" {
+		host = m.DockerHost
+	}
+	parts := []string{host}
+	if !m.HelpMode {
+		parts = append(parts, navModeLabel(m.NavMode))
+		if n := len(m.Items); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d/%d", m.Cursor+1, n))
+		}
+	}
+	if logs && m.LogViewer.FollowingLogs {
+		parts = append(parts, th.OKText.Render("following"))
+	}
+	partial := m.Keys.Partial()
+	if logs {
+		partial = m.LogViewer.Partial()
+	}
+	if partial != "" {
+		parts = append(parts, th.Warn.Render(partial))
+	}
+	if m.Status != "" {
+		st := strings.ReplaceAll(m.Status, "\n", " ")
+		if m.StatusErr {
+			st = th.ErrText.Render(st)
+		}
+		parts = append(parts, st)
+	}
+	return tk.StatusBar(th, w, mode, parts)
+}
 
-	line = ansi.Truncate(line, m.Width, "…")
-	return line + bar.Render(strings.Repeat(" ", max(m.Width-lipgloss.Width(line), 0)))
+// gdocker's own status line modes
+var (
+	modeConfirm = tk.Mode{Name: "CONFIRM", Color: tk.TokyoNight.C.Err}
+	modeHelp    = tk.Mode{Name: "HELP", Color: tk.TokyoNight.C.OK}
+)
+
+// theme is the kit theme the bars are drawn with.
+func theme(m *Model) tk.Theme {
+	if m.Stack.Len() == 0 {
+		return tk.TokyoNight
+	}
+	return m.Theme
 }
 
 // renderHints renders the last line: the keys that do something right now.
-func renderHints(m *models.Model) string {
+func renderHints(m *Model) string {
 	var text string
 	switch {
 	case m.Confirm != nil:
 		text = "y confirm · any other key cancel"
-	case m.CommandMode:
-		text = commandHint(m)
+	case m.commandOpen():
+		text = "tab/S-tab complete · ↑↓ history · enter run · esc cancel"
 	case m.HelpMode:
 		text = "j/k scroll · gg/G top/bottom · esc/q/? close help"
 	default:
 		text = statusHints(m)
 	}
-	return mutedStyle.Render(ansi.Truncate(" "+text, m.Width, "…"))
-}
-
-// commandHint shows the completion candidates while cycling through them
-// (the selected one in brackets), else the keys of the command line.
-func commandHint(m *models.Model) string {
-	if !m.CmdLine.Cycling() {
-		return "tab/S-tab complete · ↑↓ history · enter run · esc cancel"
-	}
-	// Start at the selection so it stays visible when the line is cut off.
-	items := m.CmdLine.Items
-	var parts []string
-	for i := m.CmdLine.Index; i < len(items); i++ {
-		label := items[i].Label
-		if i == m.CmdLine.Index {
-			label = "[" + label + "]"
-		}
-		parts = append(parts, label)
-	}
-	return fmt.Sprintf("%d/%d  %s", m.CmdLine.Index+1, len(items), strings.Join(parts, "  "))
+	return tk.HintBar(theme(m), m.Width, text)
 }
 
 // statusHints lists the keys that do something in the current context.
-func statusHints(m *models.Model) string {
+func statusHints(m *Model) string {
 	switch m.ViewMode {
 	case models.ViewLogs:
 		return m.LogViewer.StatusBarHint()
@@ -238,7 +219,7 @@ func statusHints(m *models.Model) string {
 	return "j/k move · 1-4 switch resource · : command · ? help · :q quit"
 }
 
-func RenderList(m *models.Model, width, height int) string {
+func RenderList(m *Model, width, height int) string {
 	var s strings.Builder
 	cfg := uiConfig(m)
 
@@ -274,7 +255,7 @@ func RenderList(m *models.Model, width, height int) string {
 	}
 
 	maxVisible := max(height-4, 1) // Account for title and footer
-	start, end := models.Visible(m.Cursor, m.ListTop, len(m.Items), maxVisible)
+	start, end := Visible(m.Cursor, m.ListTop, len(m.Items), maxVisible)
 
 	for i := start; i < end; i++ {
 		item := m.Items[i]
@@ -355,7 +336,7 @@ func RenderList(m *models.Model, width, height int) string {
 	return s.String()
 }
 
-func RenderDetails(m *models.Model, width, height int) string {
+func RenderDetails(m *Model, width, height int) string {
 	var s strings.Builder
 	cfg := uiConfig(m)
 
@@ -513,7 +494,7 @@ func RenderDetails(m *models.Model, width, height int) string {
 	return s.String()
 }
 
-func RenderPorts(m *models.Model, width, height int) string {
+func RenderPorts(m *Model, width, height int) string {
 	var s strings.Builder
 
 	if m.Cursor < 0 || m.Cursor >= len(m.Items) || !m.Items[m.Cursor].IsContainer {
@@ -567,7 +548,7 @@ func RenderPorts(m *models.Model, width, height int) string {
 	return s.String()
 }
 
-func RenderEnv(m *models.Model, width, height int) string {
+func RenderEnv(m *Model, width, height int) string {
 	var s strings.Builder
 
 	c := m.SelectedContainer()
@@ -588,7 +569,7 @@ func RenderEnv(m *models.Model, width, height int) string {
 
 	maxVisible := max(height-7, 1)
 	scrollPos := min(max(m.EnvScroll, 0), len(c.Env)-1)
-	start, end := models.Visible(scrollPos, m.EnvTop, len(c.Env), maxVisible)
+	start, end := Visible(scrollPos, m.EnvTop, len(c.Env), maxVisible)
 
 	for i := start; i < end; i++ {
 		row := lipgloss.NewStyle()
@@ -638,7 +619,7 @@ func formatTimeAgo(t time.Time) string {
 	}
 }
 
-func RenderStats(m *models.Model, width, height int) string {
+func RenderStats(m *Model, width, height int) string {
 	var s strings.Builder
 
 	containerName := "container"
@@ -686,7 +667,7 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-func RenderInspect(m *models.Model, width, height int) string {
+func RenderInspect(m *Model, width, height int) string {
 	var s strings.Builder
 	cfg := uiConfig(m)
 
@@ -716,7 +697,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 		scrollPos = 0
 	}
 
-	start, end := models.Visible(scrollPos, m.InspectTop, len(lines), maxVisible)
+	start, end := Visible(scrollPos, m.InspectTop, len(lines), maxVisible)
 
 	// Show JSON lines
 	gutterWidth := 0
@@ -752,7 +733,7 @@ func RenderInspect(m *models.Model, width, height int) string {
 
 // RenderHeader renders the title line in s3reader's style: a badge, then a
 // breadcrumb of where we are, with the resource counts on the right.
-func RenderHeader(m *models.Model, width int) string {
+func RenderHeader(m *Model, width int) string {
 	cfg := uiConfig(m)
 	crumb := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorPrimary))
 
@@ -849,7 +830,7 @@ func keyList(bindings ...[]string) string {
 
 // helpLines builds the help text from the active key bindings, so rebound
 // keys show up correctly.
-func helpLines(m *models.Model) []string {
+func helpLines(m *Model) []string {
 	kb := m.KeyBindings
 	if kb == nil {
 		kb = config.Default()
@@ -906,7 +887,7 @@ func helpLines(m *models.Model) []string {
 
 	// Generated from the command set, so it cannot go stale.
 	commands := []helpEntry{{key: keyList(kb.Commands.Enter), desc: "Enter command mode (tab completes, ↑↓ history, :hel = :help)"}}
-	for _, c := range models.Commands {
+	for _, c := range Commands {
 		commands = append(commands, helpEntry{key: ":" + c.Usage(), desc: c.Desc})
 	}
 	commands = append(commands, helpEntry{key: ":42", desc: "jump to line 42"})
@@ -922,11 +903,11 @@ func helpVisibleRows(height int) int {
 }
 
 // helpScrollRange reports how many scroll positions the help view has.
-func helpScrollRange(m *models.Model) int {
+func helpScrollRange(m *Model) int {
 	return max(len(helpLines(m))-helpVisibleRows(m.Height-2)+1, 1)
 }
 
-func RenderHelp(m *models.Model, width, height int) string {
+func RenderHelp(m *Model, width, height int) string {
 	lines := helpLines(m)
 	visible := helpVisibleRows(height)
 	start := min(max(m.HelpScroll, 0), max(len(lines)-visible, 0))
@@ -990,7 +971,7 @@ func renderHelpSection(title string, entries []helpEntry) string {
 	return s.String()
 }
 
-func uiConfig(m *models.Model) config.UIConfig {
+func uiConfig(m *Model) config.UIConfig {
 	if m != nil && m.UIConfig != nil {
 		return *m.UIConfig
 	}
